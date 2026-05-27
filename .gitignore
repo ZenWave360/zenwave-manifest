@@ -1,0 +1,11 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+
+# Build / temp
+dist/
+build/
+.cache/
+.tmp/
+tmp/
+

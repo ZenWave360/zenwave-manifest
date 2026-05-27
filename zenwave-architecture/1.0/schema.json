@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.zenwave360.io/zenwave-architecture/1.0/schema.json",
+  "title": "ZenWave Architecture Manifest",
+  "description": "Schema for the ZenWave project architecture manifest.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "version": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "properties": {
+          "type": "object",
+          "description": "Named variables available for {{variable}} interpolation.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "domains": {
+      "type": "object",
+      "description": "Top-level architecture domains.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/domain"
+      }
+    }
+  },
+  "required": [
+    "domains"
+  ],
+  "$defs": {
+    "domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "services": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/service"
+          }
+        },
+        "subdomains": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/subdomain"
+          }
+        }
+      }
+    },
+    "subdomain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "services": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/service"
+          }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "repository": {
+          "type": "string",
+          "description": "Repository URI or path expression."
+        },
+        "docs": {
+          "type": "object",
+          "description": "Named documentation resource references owned by the service or repository.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "specs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spec"
+          }
+        },
+        "consumers": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Canonical service reference: domain/service or domain/subdomain/service."
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "$ref": {
+                    "type": "string",
+                    "description": "JSON Pointer or URI-like reference to another manifest service."
+                  },
+                  "service": {
+                    "type": "string"
+                  }
+                },
+                "anyOf": [
+                  {
+                    "required": [
+                      "$ref"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "service"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "examples": [
+            "openapi",
+            "asyncapi",
+            "zdl",
+            "zfl"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "description": "Owned spec resource path or URI."
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "config": {
+        "properties": {
+          "root": "file:///workspace"
+        }
+      },
+      "domains": {
+        "orders": {
+          "services": {
+            "orders-api": {
+              "repository": "{{root}}/orders-api",
+              "docs": {
+                "adr": "docs/adr.md"
+              },
+              "specs": [
+                {
+                  "type": "openapi",
+                  "path": "src/main/resources/openapi.yml"
+                }
+              ],
+              "consumers": [
+                "shipping/shipping-api",
+                {
+                  "service": "billing/billing-api"
+                }
+              ]
+            }
+          },
+          "subdomains": {
+            "checkout": {
+              "services": {
+                "checkout-api": {
+                  "repository": "{{root}}/checkout-api"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
