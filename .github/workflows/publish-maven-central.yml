@@ -1,0 +1,49 @@
+name: Publish Release to Maven Central
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      gitRef:
+        description: "Git ref to publish (tag or branch)"
+        required: true
+        default: "main"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-maven-central-${{ inputs.gitRef || github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.gitRef || github.ref_name }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build and test
+        run: ./gradlew build
+
+      - name: Publish and release to Maven Central
+        run: ./gradlew publishAndReleaseToMavenCentral
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.CENTRAL_TOKEN }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGN_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGN_KEY_PASS }}

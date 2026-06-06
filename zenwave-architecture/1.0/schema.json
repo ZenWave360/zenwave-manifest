@@ -25,9 +25,47 @@
         },
         "properties": {
           "type": "object",
-          "description": "Named variables available for {{variable}} interpolation.",
+          "description": "Named variables available for ${variable} interpolation.",
           "additionalProperties": {
             "type": "string"
+          }
+        },
+        "sourcePriority": {
+          "type": "array",
+          "description": "Ordered source resolution priority for relative service artifacts.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "file",
+              "http",
+              "apicurio"
+            ]
+          }
+        },
+        "naming": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "groupIdExpression": {
+              "type": "string",
+              "description": "Property-path template used by runtime naming resolution, such as ${service.id}."
+            },
+            "artifactIdExpression": {
+              "type": "string",
+              "description": "Property-path template used by runtime naming resolution, such as ${artifactName}. artifactName resolves to the explicit artifact name or defaults to the filename without extension."
+            }
+          }
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "http": {
+              "$ref": "#/$defs/httpSource"
+            },
+            "apicurio": {
+              "$ref": "#/$defs/apicurioSource"
+            }
           }
         }
       }
@@ -45,6 +83,44 @@
     "domains"
   ],
   "$defs": {
+    "httpSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "apicurioSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "registryUrl": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string",
+          "default": "latest"
+        },
+        "contentUrlExpression": {
+          "type": "string",
+          "description": "Property-path template used by runtime naming resolution."
+        }
+      },
+      "required": [
+        "registryUrl"
+      ]
+    },
     "domain": {
       "type": "object",
       "additionalProperties": false,
@@ -116,21 +192,21 @@
         "description": {
           "type": "string"
         },
-        "repository": {
+        "path": {
           "type": "string",
-          "description": "Repository URI or path expression."
+          "description": "Service root path relative to a configured source root."
         },
         "docs": {
           "type": "object",
-          "description": "Named documentation resource references owned by the service or repository.",
+          "description": "Named documentation resource references relative to the service path or absolute URIs.",
           "additionalProperties": {
             "type": "string"
           }
         },
-        "specs": {
+        "artifacts": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/spec"
+            "$ref": "#/$defs/artifact"
           }
         },
         "consumers": {
@@ -169,12 +245,19 @@
             ]
           }
         }
-      }
+      },
+      "required": [
+        "path"
+      ]
     },
-    "spec": {
+    "artifact": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "name": {
+          "type": "string",
+          "description": "Optional logical artifact name. Defaults to the path filename without extension."
+        },
         "type": {
           "type": "string",
           "examples": [
@@ -186,7 +269,17 @@
         },
         "path": {
           "type": "string",
-          "description": "Owned spec resource path or URI."
+          "description": "Artifact path relative to the owning service path, or an absolute URI such as classpath:/..."
+        },
+        "version": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ]
         }
       },
       "required": [
@@ -198,22 +291,48 @@
   "examples": [
     {
       "config": {
-        "properties": {
-          "root": "file:///workspace"
+        "sourcePriority": [
+          "file",
+          "http",
+          "apicurio"
+        ],
+        "naming": {
+          "groupIdExpression": "${service.id}",
+          "artifactIdExpression": "${artifactName}"
+        },
+        "sources": {
+          "http": {
+            "enabled": true,
+            "roots": [
+              "https://raw.githubusercontent.com/acme",
+              "https://docs.acme.io"
+            ]
+          },
+          "apicurio": {
+            "enabled": true,
+            "registryUrl": "https://registry.acme.io/apis/registry/v2",
+            "branch": "latest",
+            "contentUrlExpression": "/groups/${groupId}/artifacts/${artifactId}/branches/${branch}"
+          }
         }
       },
       "domains": {
         "orders": {
           "services": {
             "orders-api": {
-              "repository": "{{root}}/orders-api",
+              "path": "/orders-api",
               "docs": {
                 "adr": "docs/adr.md"
               },
-              "specs": [
+              "artifacts": [
                 {
                   "type": "openapi",
                   "path": "src/main/resources/openapi.yml"
+                },
+                {
+                  "name": "asyncapi-template",
+                  "type": "template",
+                  "path": "classpath:/templates/asyncapi.hbs"
                 }
               ],
               "consumers": [
@@ -228,7 +347,7 @@
             "checkout": {
               "services": {
                 "checkout-api": {
-                  "repository": "{{root}}/checkout-api"
+                  "path": "/checkout-api"
                 }
               }
             }
