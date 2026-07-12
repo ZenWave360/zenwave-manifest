@@ -6,7 +6,7 @@ data class ManifestInterpolationResult(
 )
 
 object ManifestVariableInterpolator {
-    private val placeholderPattern = Regex("""\$\{\s*([A-Za-z0-9_.-]+)\s*\}""")
+    private val placeholderPattern = Regex("""[${'$'}][{]([^}]*)[}]""")
 
     fun interpolate(value: String, properties: Map<String, String>): ManifestInterpolationResult {
         val unresolved = linkedSetOf<String>()

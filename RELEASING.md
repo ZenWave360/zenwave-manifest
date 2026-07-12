@@ -38,10 +38,10 @@ There are two workflows involved:
 ## Manual Release Steps
 
 1. Run the `Create Gradle Release` workflow with:
-   - `releaseVersion`, for example `0.1.0`
-   - `developmentVersion`, for example `0.2.0-SNAPSHOT`
+   - `releaseVersion`: `0.9.0`
+   - `developmentVersion`, for example `0.10.0-SNAPSHOT`
 2. Verify that tag `v<releaseVersion>` was pushed.
-3. Watch the `Publish Release to Maven Central` workflow.
+3. The preparation workflow dispatches `Publish Release to Maven Central` for that tag. Watch that workflow.
 4. After Central Portal validation and release complete, wait for Maven Central indexing.
 
 ## Snapshot Publishing

@@ -1,0 +1,87 @@
+package io.zenwave360.manifest
+
+import kotlinx.coroutines.test.runTest
+import java.io.File
+import java.nio.file.Files
+import java.util.jar.JarEntry
+import java.util.jar.JarOutputStream
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+class ManifestMavenCentralTest {
+    @Test
+    fun downloadsCentralJarAndReadsDeclaredEntry() = runTest {
+        val root = Files.createTempDirectory("manifest-central-").toFile()
+        try {
+            val jar = File(root, "maven2/io/arcadia/orders-api/1.0/orders-api-1.0.jar")
+            writeJar(jar, mapOf("contracts/api.yml" to "openapi: 3.1.0"))
+            val loader = ZenWaveManifestLoader()
+            val manifest = loader.parse(
+                File(root, "zenwave.yml").toURI().toString(),
+                manifestText(root, contentResolution = "[maven]"),
+            )
+
+            assertEquals(
+                "openapi: 3.1.0",
+                loader.loadArtifactText(manifest, manifest.services.single(), manifest.services.single().artifacts.single()),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun missingCentralEntryAllowsWorkspaceFallback() = runTest {
+        val root = Files.createTempDirectory("manifest-central-fallback-").toFile()
+        try {
+            val jar = File(root, "maven2/io/arcadia/orders-api/1.0/orders-api-1.0.jar")
+            writeJar(jar, mapOf("other.yml" to "unused"))
+            val workspaceArtifact = File(root, "commerce/orders/contracts/api.yml")
+            workspaceArtifact.parentFile.mkdirs()
+            workspaceArtifact.writeText("workspace fallback")
+            val loader = ZenWaveManifestLoader()
+            val manifest = loader.parse(
+                File(root, "zenwave.yml").toURI().toString(),
+                manifestText(root, contentResolution = "[maven, workspace]"),
+            )
+
+            assertEquals(
+                "workspace fallback",
+                loader.loadArtifactText(manifest, manifest.services.single(), manifest.services.single().artifacts.single()),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private fun manifestText(root: File, contentResolution: String): String = """
+        config:
+          groupIdExpression: io.arcadia
+          artifactIdExpression: orders-api
+          contentResolution: $contentResolution
+          sources:
+            maven:
+              provider: central
+              server: ${root.toURI().toString().trimEnd('/')}
+              repository: maven2
+        domains:
+          commerce:
+            version: 1.0
+            services:
+              orders:
+                artifacts:
+                  - type: openapi
+                    path: contracts/api.yml
+    """.trimIndent()
+
+    private fun writeJar(file: File, entries: Map<String, String>) {
+        file.parentFile.mkdirs()
+        JarOutputStream(file.outputStream()).use { jar ->
+            entries.forEach { (path, content) ->
+                jar.putNextEntry(JarEntry(path))
+                jar.write(content.encodeToByteArray())
+                jar.closeEntry()
+            }
+        }
+    }
+}

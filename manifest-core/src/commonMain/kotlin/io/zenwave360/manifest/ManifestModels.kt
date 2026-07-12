@@ -8,9 +8,7 @@ data class ZenWaveManifest(
     val diagnostics: List<ManifestDiagnostic> = emptyList(),
 ) {
     val servicesByRef: Map<String, ManifestService> = services.associateBy { it.serviceRef }
-    val servicesById: Map<String, ManifestService> = services.mapNotNull { service ->
-        service.id?.let { it to service }
-    }.toMap()
+    val servicesById: Map<String, ManifestService> = services.associateBy { it.id }
 
     fun findService(reference: String): ManifestService? =
         servicesByRef[reference] ?: servicesById[reference]
@@ -19,37 +17,62 @@ data class ZenWaveManifest(
 data class ManifestConfig(
     val title: String? = null,
     val version: String? = null,
+    val groupIdExpression: String = "\${service.id}",
+    val artifactIdExpression: String = "\${artifact.fileNameWithoutExtension}",
     val properties: Map<String, String> = emptyMap(),
-    val sourcePriority: List<String> = listOf("file", "http", "apicurio"),
-    val naming: ManifestNaming = ManifestNaming(),
+    val contentResolution: List<String> = listOf(ManifestSourceName.WORKSPACE),
     val sources: ManifestSources = ManifestSources(),
 )
 
-data class ManifestNaming(
-    val groupIdExpression: String? = null,
-    val artifactIdExpression: String? = null,
-)
+object ManifestSourceName {
+    const val WORKSPACE = "workspace"
+    const val GIT = "git"
+    const val APICURIO = "apicurio"
+    const val ARTIFACTORY = "artifactory"
+    const val MAVEN = "maven"
+
+    val all: Set<String> = setOf(WORKSPACE, GIT, APICURIO, ARTIFACTORY, MAVEN)
+}
 
 data class ManifestSources(
-    val http: ManifestHttpSource? = null,
+    val workspace: ManifestWorkspaceSource = ManifestWorkspaceSource(),
+    val git: ManifestGitSource? = null,
     val apicurio: ManifestApicurioSource? = null,
+    val artifactory: ManifestArtifactorySource? = null,
+    val maven: ManifestMavenSource? = null,
 )
 
-data class ManifestHttpSource(
-    val enabled: Boolean = true,
-    val roots: List<String> = emptyList(),
+data class ManifestWorkspaceSource(
+    val basePathExpression: String = "\${domain.id}/\${subdomain.id}/\${service.id}",
+)
+
+data class ManifestGitSource(
+    val provider: String,
+    val server: String? = null,
+    val contentUrlExpression: String? = null,
 )
 
 data class ManifestApicurioSource(
-    val enabled: Boolean = true,
-    val registryUrl: String? = null,
-    val branch: String = "latest",
-    val contentUrlExpression: String = "/groups/\${groupId}/artifacts/\${artifactId}/branches/\${branch}",
+    val server: String,
+    val contentUrlExpression: String? = null,
+)
+
+data class ManifestArtifactorySource(
+    val server: String,
+    val contentUrlExpression: String =
+        "\${server}/artifactory/contracts/\${domain.id}/\${subdomain.id}/\${service.id}/\${version}/\${content.path}",
+)
+
+data class ManifestMavenSource(
+    val provider: String,
+    val server: String,
+    val repository: String,
 )
 
 data class ManifestDomain(
     val key: String,
-    val id: String? = null,
+    val id: String,
+    val version: String? = null,
     val name: String? = null,
     val description: String? = null,
     val services: List<ManifestService> = emptyList(),
@@ -58,7 +81,8 @@ data class ManifestDomain(
 
 data class ManifestSubdomain(
     val key: String,
-    val id: String? = null,
+    val id: String,
+    val version: String? = null,
     val name: String? = null,
     val description: String? = null,
     val services: List<ManifestService> = emptyList(),
@@ -66,33 +90,106 @@ data class ManifestSubdomain(
 
 data class ManifestService(
     val domainKey: String,
+    val domainId: String,
     val subdomainKey: String?,
+    val subdomainId: String,
     val serviceKey: String,
-    val id: String? = null,
+    val id: String,
+    val groupId: String? = null,
     val version: String? = null,
+    val domainVersion: String? = null,
+    val subdomainVersion: String? = null,
     val name: String? = null,
     val description: String? = null,
     val serviceRef: String,
-    val path: String,
     val docs: Map<String, String> = emptyMap(),
     val artifacts: List<ManifestArtifact> = emptyList(),
     val consumers: List<String> = emptyList(),
-)
+    val repository: String? = null,
+) {
+    fun resolvedVersion(artifact: ManifestArtifact? = null): String? =
+        artifact?.version.nonBlankOrNull()
+            ?: version.nonBlankOrNull()
+            ?: subdomainVersion.nonBlankOrNull()
+            ?: domainVersion.nonBlankOrNull()
+}
 
 data class ManifestArtifact(
-    val name: String,
+    val name: String? = null,
+    val artifactId: String? = null,
     val type: String,
-    val pathExpression: String,
+    val path: String,
     val version: String? = null,
+) {
+    val fileName: String
+        get() = path.substringAfterLast('/').substringAfterLast('\\')
+
+    val fileNameWithoutExtension: String
+        get() {
+            val file = fileName
+            val extensionIndex = file.lastIndexOf('.')
+            return if (extensionIndex <= 0) file else file.substring(0, extensionIndex)
+        }
+}
+
+data class ManifestCoordinates(
+    val groupId: String,
+    val artifactId: String,
 )
+
+data class ManifestResolutionContext(
+    val domainId: String,
+    val subdomainId: String,
+    val serviceId: String,
+    val domainVersion: String?,
+    val subdomainVersion: String?,
+    val serviceVersion: String?,
+    val artifact: ManifestArtifact?,
+    val contentPath: String,
+    val docs: Map<String, String>,
+    val groupId: String? = null,
+    val artifactId: String? = null,
+    val version: String? = null,
+    val repository: String? = null,
+) {
+    fun variables(): Map<String, String> = buildMap {
+        put("domain.id", domainId)
+        put("subdomain.id", subdomainId)
+        put("service.id", serviceId)
+        repository.nonBlankOrNull()?.let { put("service.repository", it) }
+        domainVersion.nonBlankOrNull()?.let { put("domain.version", it) }
+        subdomainVersion.nonBlankOrNull()?.let { put("subdomain.version", it) }
+        serviceVersion.nonBlankOrNull()?.let { put("service.version", it) }
+        put("content.path", contentPath)
+        artifact?.let {
+            put("artifact.path", it.path)
+            put("artifact.fileName", it.fileName)
+            put("artifact.fileNameWithoutExtension", it.fileNameWithoutExtension)
+            it.name.nonBlankOrNull()?.let { name -> put("artifact.name", name) }
+            it.version.nonBlankOrNull()?.let { version -> put("artifact.version", version) }
+        }
+        docs.forEach { (key, value) -> put("service.docs[$key]", value) }
+        groupId.nonBlankOrNull()?.let { put("groupId", it) }
+        artifactId.nonBlankOrNull()?.let { put("artifactId", it) }
+        version.nonBlankOrNull()?.let { put("version", it) }
+    }
+}
 
 data class ManifestLoadOptions(
     val preferredSource: String? = null,
     val allowFallback: Boolean = true,
-    val localRoots: List<String> = emptyList(),
 )
 
 data class ManifestResolvedResource(
     val source: String,
     val uri: String,
+    val archiveEntry: String? = null,
 )
+
+fun interface ManifestArchiveEntryLoader {
+    suspend fun loadEntry(uri: String, entryPath: String): String
+}
+
+internal expect fun defaultManifestArchiveEntryLoader(): ManifestArchiveEntryLoader?
+
+internal fun String?.nonBlankOrNull(): String? = this?.trim()?.takeIf { it.isNotEmpty() }

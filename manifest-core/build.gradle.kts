@@ -20,24 +20,22 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting {
-            dependencies {
-                implementation(kotlin("stdlib-common"))
-                implementation(libs.json.schema.ref.parser.kmp)
-            }
+        commonMain.dependencies {
+            implementation(kotlin("stdlib-common"))
+            implementation(libs.json.schema.ref.parser.kmp)
         }
 
-        val commonTest by getting {
-            dependencies {
-                implementation(kotlin("test"))
-                implementation(libs.kotlinx.coroutines.test)
-            }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
         }
 
-        val jvmMain by getting {
-            dependencies {
-                implementation(kotlin("stdlib-jdk8"))
-            }
+        jvmMain.dependencies {
+            implementation(kotlin("stdlib-jdk8"))
+        }
+
+        jvmTest.dependencies {
+            implementation("com.networknt:json-schema-validator:2.0.4")
         }
     }
 }

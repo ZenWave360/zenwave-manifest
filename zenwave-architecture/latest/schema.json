@@ -1,9 +1,288 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.zenwave360.io/zenwave-architecture/latest/schema.json",
-  "allOf": [
-    {
-      "$ref": "https://schemas.zenwave360.io/zenwave-architecture/1.0/schema.json"
+  "title": "ZenWave Architecture Manifest 1.0",
+  "description": "Read-only architecture manifest with deterministic ordered content resolution.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "config": { "$ref": "#/$defs/config" },
+    "domains": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/nonBlank" },
+      "additionalProperties": { "$ref": "#/$defs/domain" }
     }
-  ]
+  },
+  "required": ["domains"],
+  "allOf": [
+    { "$ref": "#/$defs/requireActiveGit" },
+    { "$ref": "#/$defs/requireActiveApicurio" },
+    { "$ref": "#/$defs/requireActiveArtifactory" },
+    { "$ref": "#/$defs/requireActiveMaven" }
+  ],
+  "$defs": {
+    "nonBlank": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "version": {
+      "description": "Opaque content version normalized to a string at runtime.",
+      "oneOf": [{ "type": "string" }, { "type": "number" }]
+    },
+    "runtimeExpression": {
+      "allOf": [{ "$ref": "#/$defs/nonBlank" }],
+      "description": "Literal expression using domain.id, subdomain.id, service.id, explicit service.repository, domain.version, subdomain.version, service.version, artifact.version, artifact.path, explicit artifact.name, artifact.fileName, artifact.fileNameWithoutExtension, content.path, service.docs[key], groupId, artifactId, inherited version, or source-local server."
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "version": {
+          "allOf": [{ "$ref": "#/$defs/version" }],
+          "description": "Manifest document version; never part of content version inheritance."
+        },
+        "groupIdExpression": {
+          "$ref": "#/$defs/runtimeExpression",
+          "default": "${service.id}"
+        },
+        "artifactIdExpression": {
+          "$ref": "#/$defs/runtimeExpression",
+          "default": "${artifact.fileNameWithoutExtension}"
+        },
+        "properties": {
+          "type": "object",
+          "description": "Static string substitution performed before runtime interpolation.",
+          "additionalProperties": { "type": "string" }
+        },
+        "contentResolution": {
+          "type": "array",
+          "description": "Ordered list of active read sources.",
+          "default": ["workspace"],
+          "items": {
+            "type": "string",
+            "enum": ["workspace", "git", "apicurio", "artifactory", "maven"]
+          }
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "workspace": { "$ref": "#/$defs/workspaceSource" },
+            "git": { "$ref": "#/$defs/gitSource" },
+            "apicurio": { "$ref": "#/$defs/apicurioSource" },
+            "artifactory": { "$ref": "#/$defs/artifactorySource" },
+            "maven": { "$ref": "#/$defs/mavenSource" }
+          }
+        }
+      }
+    },
+    "workspaceSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "basePathExpression": {
+          "type": "string",
+          "default": "${domain.id}/${subdomain.id}/${service.id}"
+        }
+      }
+    },
+    "gitSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["github", "gitlab", "bitbucket", "generic"]
+        },
+        "server": { "$ref": "#/$defs/nonBlank" },
+        "contentUrlExpression": { "$ref": "#/$defs/runtimeExpression" }
+      },
+      "required": ["provider"],
+      "allOf": [
+        {
+          "if": { "properties": { "provider": { "const": "generic" } }, "required": ["provider"] },
+          "then": { "required": ["contentUrlExpression"] }
+        }
+      ]
+    },
+    "apicurioSource": {
+      "type": "object",
+      "description": "Apicurio Registry v3 artifact reads; not applicable to service documents.",
+      "additionalProperties": false,
+      "properties": {
+        "server": { "$ref": "#/$defs/nonBlank" },
+        "contentUrlExpression": {
+          "allOf": [{ "$ref": "#/$defs/runtimeExpression" }],
+          "default": "${server}/apis/registry/v3/groups/${service.id}/artifacts/${artifact.path}/versions/${version}/content"
+        }
+      },
+      "required": ["server"]
+    },
+    "artifactorySource": {
+      "type": "object",
+      "description": "Generic Artifactory HTTP GET URL configuration.",
+      "additionalProperties": false,
+      "properties": {
+        "server": { "$ref": "#/$defs/nonBlank" },
+        "contentUrlExpression": {
+          "allOf": [{ "$ref": "#/$defs/runtimeExpression" }],
+          "default": "${server}/artifactory/contracts/${domain.id}/${subdomain.id}/${service.id}/${version}/${content.path}"
+        }
+      },
+      "required": ["server"]
+    },
+    "mavenSource": {
+      "type": "object",
+      "description": "Read artifacts from an Artifactory or Maven Central-compatible repository.",
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string", "enum": ["artifactory", "central"] },
+        "server": { "$ref": "#/$defs/nonBlank" },
+        "repository": { "$ref": "#/$defs/nonBlank" }
+      },
+      "required": ["provider"],
+      "allOf": [
+        {
+          "if": { "properties": { "provider": { "const": "artifactory" } }, "required": ["provider"] },
+          "then": { "required": ["server", "repository"] }
+        },
+        {
+          "if": { "properties": { "provider": { "const": "central" } }, "required": ["provider"] },
+          "then": {
+            "properties": {
+              "server": { "default": "https://repo.maven.apache.org" },
+              "repository": { "default": "maven2" }
+            }
+          }
+        }
+      ]
+    },
+    "domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/nonBlank" },
+        "version": { "$ref": "#/$defs/version" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "services": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/nonBlank" },
+          "additionalProperties": { "$ref": "#/$defs/service" }
+        },
+        "subdomains": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/nonBlank" },
+          "additionalProperties": { "$ref": "#/$defs/subdomain" }
+        }
+      }
+    },
+    "subdomain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/nonBlank" },
+        "version": { "$ref": "#/$defs/version" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "services": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/nonBlank" },
+          "additionalProperties": { "$ref": "#/$defs/service" }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/nonBlank" },
+        "repository": { "$ref": "#/$defs/nonBlank" },
+        "groupId": { "$ref": "#/$defs/nonBlank" },
+        "version": { "$ref": "#/$defs/version" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "docs": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z0-9._-]+$" },
+          "additionalProperties": { "$ref": "#/$defs/nonBlank" }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact" }
+        },
+        "consumers": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "$ref": { "type": "string" },
+                  "service": { "type": "string" }
+                },
+                "oneOf": [{ "required": ["$ref"] }, { "required": ["service"] }]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/nonBlank" },
+        "artifactId": { "$ref": "#/$defs/nonBlank" },
+        "type": { "$ref": "#/$defs/nonBlank" },
+        "path": { "$ref": "#/$defs/nonBlank" },
+        "version": { "$ref": "#/$defs/version" }
+      },
+      "required": ["type", "path"]
+    },
+    "requireActiveGit": {
+      "if": { "$ref": "#/$defs/selectsGit" },
+      "then": { "$ref": "#/$defs/requiresGit" }
+    },
+    "requireActiveApicurio": {
+      "if": { "$ref": "#/$defs/selectsApicurio" },
+      "then": { "$ref": "#/$defs/requiresApicurio" }
+    },
+    "requireActiveArtifactory": {
+      "if": { "$ref": "#/$defs/selectsArtifactory" },
+      "then": { "$ref": "#/$defs/requiresArtifactory" }
+    },
+    "requireActiveMaven": {
+      "if": { "$ref": "#/$defs/selectsMaven" },
+      "then": { "$ref": "#/$defs/requiresMaven" }
+    },
+    "selectsGit": { "$ref": "#/$defs/selectsSource", "properties": { "config": { "properties": { "contentResolution": { "contains": { "const": "git" } } } } } },
+    "selectsApicurio": { "$ref": "#/$defs/selectsSource", "properties": { "config": { "properties": { "contentResolution": { "contains": { "const": "apicurio" } } } } } },
+    "selectsArtifactory": { "$ref": "#/$defs/selectsSource", "properties": { "config": { "properties": { "contentResolution": { "contains": { "const": "artifactory" } } } } } },
+    "selectsMaven": { "$ref": "#/$defs/selectsSource", "properties": { "config": { "properties": { "contentResolution": { "contains": { "const": "maven" } } } } } },
+    "selectsSource": {
+      "type": "object",
+      "required": ["config"],
+      "properties": { "config": { "type": "object", "required": ["contentResolution"] } }
+    },
+    "requiresGit": { "$ref": "#/$defs/requiresSources", "properties": { "config": { "properties": { "sources": { "required": ["git"] } } } } },
+    "requiresApicurio": { "$ref": "#/$defs/requiresSources", "properties": { "config": { "properties": { "sources": { "required": ["apicurio"] } } } } },
+    "requiresArtifactory": { "$ref": "#/$defs/requiresSources", "properties": { "config": { "properties": { "sources": { "required": ["artifactory"] } } } } },
+    "requiresMaven": { "$ref": "#/$defs/requiresSources", "properties": { "config": { "properties": { "sources": { "required": ["maven"] } } } } },
+    "requiresSources": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "type": "object",
+          "required": ["sources"],
+          "properties": { "sources": { "type": "object" } }
+        }
+      }
+    }
+  }
 }
