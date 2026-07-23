@@ -1,5 +1,5 @@
 [versions]
-json-schema-ref-parser-kmp = "0.9.21"
+json-schema-ref-parser-kmp = "0.9.22"
 kotlin = "2.3.0"
 kotlinx-coroutines = "1.8.1"
 maven-publish = "0.34.0"
