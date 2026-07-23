@@ -3,6 +3,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     kotlin("multiplatform")
     id("com.vanniktech.maven.publish")
+    alias(libs.plugins.kotlinx.kover)
 }
 
 kotlin {

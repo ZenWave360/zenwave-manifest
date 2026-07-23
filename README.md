@@ -1,7 +1,9 @@
 # ZenWave Manifest
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.zenwave360.manifest/manifest-core.svg?label=Maven%20Central&logo=apachemaven)](https://search.maven.org/artifact/io.zenwave360.manifest/manifest-core)
-[![build](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/main.yml)
+[![build](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/publish-maven-snapshots.yml/badge.svg?branch=develop)](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/publish-maven-snapshots.yml)
+[![line coverage](https://raw.githubusercontent.com/ZenWave360/zenwave-manifest/badges/coverage.svg)](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/main.yml)
+[![branch coverage](https://raw.githubusercontent.com/ZenWave360/zenwave-manifest/badges/branches.svg)](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/main.yml)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/ZenWave360/zenwave-manifest/blob/main/LICENSE)
 
 ZenWave Manifest is the read-only architecture contract shared by ZenWave tools. A hand-authored `zenwave-architecture.yml` describes domains, services, documentation, and artifacts; the Kotlin Multiplatform library resolves that content deterministically from workspace, Git, Apicurio Registry, generic Artifactory, or Maven sources.
