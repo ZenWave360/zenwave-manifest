@@ -8,7 +8,6 @@
 
 ZenWave Manifest is the read-only architecture contract shared by ZenWave tools. A hand-authored `zenwave-architecture.yml` describes domains, services, documentation, and artifacts; the Kotlin Multiplatform library resolves that content deterministically from workspace, Git, Apicurio Registry, generic Artifactory, or Maven sources.
 
-Version 1 only reads content. It does not publish, upload, register, clone, push, commit, tag, sign, or deploy manifest-managed content. The repository's own Gradle/Maven release setup only publishes the `manifest-core` library.
 
 - Versioned schema: `https://schemas.zenwave360.io/zenwave-architecture/1.0/schema.json`
 - Latest schema: `https://schemas.zenwave360.io/zenwave-architecture/latest/schema.json`
