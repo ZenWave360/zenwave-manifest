@@ -17,6 +17,7 @@ jobs:
     uses: ZenWave360/release-workflows/.github/workflows/publish-snapshots-gradle.yml@main
     with:
       java-version: "21"
+      kover-xml-files: "./manifest-core/build/reports/kover/report.xml"
     secrets:
       CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
       CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}

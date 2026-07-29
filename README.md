@@ -74,9 +74,10 @@ domains:
             artifacts:
               - type: asyncapi
                 path: contracts/shipping.asyncapi.yaml
+                version: 2.0.0
 ```
 
-Domains, subdomains, and services use a non-blank explicit `id` when present and otherwise use their YAML map key. A direct service has an empty `subdomain.id`. The primary example deliberately omits artifact `name` and `artifactId`: names are never derived from paths, while artifact IDs use their configured fallback.
+Domains, subdomains, and services use a non-blank explicit `id` when present and otherwise use their YAML map key. A direct service has an empty `subdomain.id`. Every artifact declares its own required `version`; domain, subdomain, and service versions are optional and apply only to service documents. The primary example deliberately omits artifact `name` and `artifactId`: names are never derived from paths, while artifact IDs use their configured fallback.
 
 For a manifest stored at `/work/architecture/manifests/zenwave-architecture.yml`, the `../../` prefix reaches `/work`; the first artifact's workspace candidate is:
 
@@ -109,7 +110,7 @@ Static `config.properties` substitution runs first. It cannot override canonical
 | `${domain.version}` | Explicit domain version, when declared. |
 | `${subdomain.version}` | Explicit subdomain version, when declared. |
 | `${service.version}` | Explicit service version, when declared. |
-| `${artifact.version}` | Explicit artifact version, when declared. |
+| `${artifact.version}` | Declared artifact version; artifact `version` is required. |
 | `${artifact.path}` | Complete declared artifact path. |
 | `${artifact.name}` | Explicit non-blank artifact name only; unresolved when omitted. |
 | `${artifact.fileName}` | Final artifact path segment, with every extension. |
@@ -118,7 +119,7 @@ Static `config.properties` substitution runs first. It cannot override canonical
 | `${service.docs[key]}` | Declared document path for the literal key. |
 | `${groupId}` | Common resolved group coordinate. |
 | `${artifactId}` | Common resolved artifact coordinate. |
-| `${version}` | Inherited content version. |
+| `${version}` | Effective content version: `artifact.version` for an artifact, the inherited service, subdomain, or domain version for a service document. |
 
 Service architecture identity and source-control location are deliberately separate. Repository identity is never inferred from `service.id`:
 
@@ -131,6 +132,10 @@ config:
       provider: github
       server: https://github.com
       contentUrlExpression: "${server}/arcadia-editions/${service.repository}/raw/main/${content.path}"
+    maven:
+      provider: github
+      server: https://maven.pkg.github.com
+      repository: "arcadia-editions/${service.repository}"
 domains:
   catalog:
     services:
@@ -138,6 +143,8 @@ domains:
         id: catalog.catalog-management.catalog-products
         repository: catalog-products-api
 ```
+
+`maven.repository` accepts the same runtime expressions and is resolved once per artifact, so services publishing to their own GitHub Packages repositories share a single Maven source declaration.
 
 If `repository` is omitted, `${service.repository}` stays unresolved and any selected expression that uses it fails with the standard unresolved-runtime-variable diagnostic.
 
@@ -161,7 +168,7 @@ ${service.docs[readme]}  = docs/README.md
 
 `${service.docs}` alone, an invalid lookup, or a missing key fails before I/O. Loading all docs evaluates the source URL once per entry, so `${content.path}` changes from `docs/SUMMARY.md` to `docs/EVENT_CATALOG.md` and then `docs/README.md`.
 
-`${version}` preserves effective-version inheritance: artifact, service, subdomain, then domain. Documents begin at service. The qualified version expressions expose only their corresponding explicit declaration and do not inherit. YAML strings and numbers normalize to strings; `config.version` and artifact contents never supply a content version.
+`${version}` resolves differently for the two kinds of content. For an artifact it is exactly `artifact.version`, which is a required field and never inherits from the service, subdomain, or domain. For a service document it inherits service, then subdomain, then domain. The qualified version expressions expose only their corresponding explicit declaration and do not inherit. Blank versions count as absent. YAML strings and numbers normalize to strings; `config.version` and artifact contents never supply a content version.
 
 ## Coordinates and explicit overrides
 
@@ -185,6 +192,7 @@ domains:
             artifactId: orders-openapi
             type: openapi
             path: contracts/orders.openapi.yaml
+            version: 1.1.0
 ```
 
 `${groupId}` and `${artifactId}` can be selected by any artifact provider expression, not only Maven.

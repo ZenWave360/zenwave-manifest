@@ -14,3 +14,4 @@ jobs:
     uses: ZenWave360/release-workflows/.github/workflows/main-gradle.yml@main
     with:
       java-version: "21"
+      kover-xml-files: "./manifest-core/build/reports/kover/report.xml"

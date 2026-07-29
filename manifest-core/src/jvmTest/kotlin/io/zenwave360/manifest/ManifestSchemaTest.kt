@@ -57,8 +57,109 @@ class ManifestSchemaTest {
                             artifactId: public-openapi
                             type: openapi
                             path: contracts/api.yml
+                            version: 1.0.0
             """.trimIndent(),
         )
+    }
+
+    @Test
+    fun artifactVersionIsRequiredInBothSchemas() {
+        val versioned = """
+            domains:
+              commerce:
+                services:
+                  orders:
+                    artifacts:
+                      - type: openapi
+                        path: contracts/api.yml
+                        version: 1.0.0
+        """.trimIndent()
+        assertValid(v1Schema(), versioned)
+        assertValid(latestSchema(), versioned)
+
+        val withoutVersion = """
+            domains:
+              commerce:
+                services:
+                  orders:
+                    artifacts:
+                      - type: openapi
+                        path: contracts/api.yml
+        """.trimIndent()
+        assertInvalid(v1Schema(), withoutVersion)
+        assertInvalid(latestSchema(), withoutVersion)
+    }
+
+    @Test
+    fun mavenRepositoryAcceptsRuntimeExpressionsInBothSchemas() {
+        val interpolated = """
+            config:
+              contentResolution: [maven]
+              sources:
+                maven:
+                  provider: central
+                  server: https://maven.pkg.github.com
+                  repository: "arcadia-editions/${'$'}{service.repository}"
+            domains:
+              catalog:
+                services:
+                  products:
+                    repository: catalog-products-api
+                    artifacts:
+                      - type: openapi
+                        path: contracts/api.yml
+                        version: 1.1.0
+        """.trimIndent()
+        assertValid(v1Schema(), interpolated)
+        assertValid(latestSchema(), interpolated)
+
+        val blankRepository = interpolated.replace(
+            "repository: \"arcadia-editions/${'$'}{service.repository}\"",
+            "repository: \" \"",
+        )
+        assertInvalid(v1Schema(), blankRepository)
+        assertInvalid(latestSchema(), blankRepository)
+    }
+
+    @Test
+    fun mavenGitHubProviderRequiresRepositoryButDefaultsServer() {
+        val gitHubProvider = """
+            config:
+              contentResolution: [maven]
+              sources:
+                maven:
+                  provider: github
+                  repository: "arcadia-editions/${'$'}{service.repository}"
+            domains:
+              catalog:
+                services:
+                  products:
+                    repository: catalog-products-api
+                    artifacts:
+                      - type: openapi
+                        path: contracts/api.yml
+                        version: 1.1.0
+        """.trimIndent()
+        assertValid(v1Schema(), gitHubProvider)
+        assertValid(latestSchema(), gitHubProvider)
+
+        val gitHubMissingRepository = """
+            config:
+              contentResolution: [maven]
+              sources:
+                maven:
+                  provider: github
+            domains:
+              catalog:
+                services:
+                  products:
+                    artifacts:
+                      - type: openapi
+                        path: contracts/api.yml
+                        version: 1.1.0
+        """.trimIndent()
+        assertInvalid(v1Schema(), gitHubMissingRepository)
+        assertInvalid(latestSchema(), gitHubMissingRepository)
     }
 
     @Test
@@ -230,6 +331,7 @@ class ManifestSchemaTest {
                         artifacts:
                           - type: asyncapi
                             path: contracts/shipping.asyncapi.yaml
+                            version: 2.0.0
         """.trimIndent()
     }
 }
