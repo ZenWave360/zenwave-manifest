@@ -24,6 +24,19 @@ object ManifestReferenceResolver {
         return normalizeEmptySegments("${base.trimEnd('/')}/${child.trimStart('/')}")
     }
 
+    /** Resolves one slash-separated path against another without introducing a URI scheme. */
+    fun resolvePathReference(basePath: String, reference: String): String {
+        if (reference.isBlank()) return normalizeFilesystemPath(basePath)
+        val normalizedReference = reference.replace('\\', '/')
+        if (normalizedReference.startsWith('/')) {
+            return normalizeFilesystemPath(normalizedReference).trimStart('/')
+        }
+        val normalizedBase = basePath.replace('\\', '/')
+        val baseDirectory = normalizedBase.substringBeforeLast('/', missingDelimiterValue = "")
+        val combined = if (baseDirectory.isEmpty()) normalizedReference else "$baseDirectory/$normalizedReference"
+        return normalizeFilesystemPath(combined).trimStart('/')
+    }
+
     /** Removes empty slash-separated path segments without damaging a URI scheme. */
     fun normalizeEmptySegments(value: String): String {
         val scheme = when {

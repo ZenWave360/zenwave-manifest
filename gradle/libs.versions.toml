@@ -7,6 +7,7 @@ maven-publish = "0.34.0"
 
 [libraries]
 json-schema-ref-parser-kmp = { module = "io.zenwave360.jsonrefparser:json-schema-ref-parser-kmp", version.ref = "json-schema-ref-parser-kmp" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 
 [plugins]

@@ -213,6 +213,50 @@ Supported absolute URIs bypass the list. Exhausted reads report redacted candida
 
 See [the detailed source guide](docs/source-resolution-guide.md) for provider defaults, custom Git recipes, encoding, workspace traversal, Artifactory layouts, and Maven Central JAR extraction.
 
+## Loading API
+
+`ZenWaveManifestLoader` is the canonical multiplatform API. Its loading operations are
+`suspend` functions so JVM and Node.js/Kotlin callers can perform manifest, document, and
+artifact I/O without blocking their server event loop:
+
+```kotlin
+val loader = ZenWaveManifestLoader()
+val manifest = loader.load("file:///workspace/zenwave-architecture.yml") // http also work
+val service = manifest.findService("commerce/orders")!!
+val openApis = service.findArtifacts("openapi")
+val text = loader.loadArtifactText(manifest, service, openApis.first())
+val schema = loader.resolveArtifactReference(
+    manifest,
+    service,
+    openApis.first(),
+    "schemas/order.yaml",
+)
+```
+
+Java and synchronous JVM integrations can use `BlockingZenWaveManifestLoader`. It exposes the
+same I/O operations without coroutine continuations and accepts either `String` or `java.net.URI`
+for root resources:
+
+```java
+var loader = new BlockingZenWaveManifestLoader();
+var manifest = loader.load(URI.create("file:///workspace/zenwave-architecture.yml"));
+var service = manifest.findService("commerce/orders");
+var artifact = service.findArtifact("openapi");
+var options = new ManifestLoadOptions()
+        .withPreferredSource("workspace")
+        .withFallback(true);
+var text = loader.loadArtifactText(manifest, service, artifact, options);
+```
+
+For batch service documents, `loadServiceDocResults` preserves one result per configured
+document, including its resolved resource or error message. `loadAvailableServiceDocs` is the
+convenience variant for generators that only need successfully loaded content.
+`loadServiceDocs` remains the fail-fast variant.
+
+Candidate and reference construction remains non-blocking on the common loader. Use
+`ManifestResolvedResource.referenceUri()` when a consumer needs a single URI-like reference,
+including a resource stored inside an archive.
+
 ## Kotlin module and verification
 
 `manifest-core` contains common parsing, diagnostics, interpolation, and candidate construction for JVM and JavaScript. JVM also provides Maven Central JAR entry extraction; JavaScript hosts can supply an archive-entry loader.

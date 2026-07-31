@@ -115,6 +115,12 @@ data class ManifestService(
         version.nonBlankOrNull()
             ?: subdomainVersion.nonBlankOrNull()
             ?: domainVersion.nonBlankOrNull()
+
+    fun findArtifact(type: String): ManifestArtifact? =
+        artifacts.firstOrNull { it.type == type }
+
+    fun findArtifacts(type: String): List<ManifestArtifact> =
+        artifacts.filter { it.type == type }
 }
 
 data class ManifestArtifact(
@@ -190,16 +196,52 @@ data class ManifestResolutionContext(
     }
 }
 
-data class ManifestLoadOptions(
+data class ManifestLoadOptions @kotlin.jvm.JvmOverloads constructor(
     val preferredSource: String? = null,
     val allowFallback: Boolean = true,
-)
+) {
+    fun withPreferredSource(source: String?): ManifestLoadOptions =
+        copy(preferredSource = source.nonBlankOrNull())
+
+    fun withFallback(allow: Boolean): ManifestLoadOptions =
+        copy(allowFallback = allow)
+}
 
 data class ManifestResolvedResource(
     val source: String,
     val uri: String,
     val archiveEntry: String? = null,
-)
+) {
+    fun resolveReference(reference: String): ManifestResolvedResource {
+        if (reference.isBlank()) return this
+        if (archiveEntry != null && !ManifestReferenceResolver.hasScheme(reference)) {
+            return copy(archiveEntry = ManifestReferenceResolver.resolvePathReference(archiveEntry, reference))
+        }
+        return copy(
+            uri = ManifestReferenceResolver.resolveReference(uri, reference),
+            archiveEntry = null,
+        )
+    }
+
+    fun referenceUri(): String =
+        archiveEntry?.let { "$uri!/${it.trimStart('/')}" } ?: uri
+}
+
+/**
+ * Non-throwing result for batch resource loading.
+ *
+ * Tooling can retain successfully loaded content while presenting [errorMessage] for an
+ * individual document that could not be resolved or read.
+ */
+data class ManifestResourceLoadResult(
+    val path: String,
+    val resource: ManifestResolvedResource? = null,
+    val content: String? = null,
+    val errorMessage: String? = null,
+) {
+    val successful: Boolean
+        get() = content != null
+}
 
 fun interface ManifestArchiveEntryLoader {
     suspend fun loadEntry(uri: String, entryPath: String): String

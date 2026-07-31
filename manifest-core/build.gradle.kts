@@ -32,6 +32,7 @@ kotlin {
         }
 
         jvmMain.dependencies {
+            implementation(libs.kotlinx.coroutines.core)
             implementation(kotlin("stdlib-jdk8"))
         }
 

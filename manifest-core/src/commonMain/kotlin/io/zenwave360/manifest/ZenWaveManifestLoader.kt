@@ -3,6 +3,7 @@ package io.zenwave360.manifest
 import io.zenwave360.jsonrefparser.RefParser
 import io.zenwave360.jsonrefparser.io.DocumentLoader
 import io.zenwave360.jsonrefparser.io.defaultLoaders
+import kotlin.jvm.JvmOverloads
 
 class ManifestResolutionException(message: String) : IllegalArgumentException(message)
 
@@ -87,6 +88,51 @@ class ZenWaveManifestLoader(
             options = options,
         ).second
     }
+
+    /**
+     * Loads every configured service document independently, retaining failures as values.
+     *
+     * This is the preferred batch API for LSP/MCP and other tooling that should report a broken
+     * document without discarding documents that loaded successfully.
+     */
+    suspend fun loadServiceDocResults(
+        manifest: ZenWaveManifest,
+        service: ManifestService,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): Map<String, ManifestResourceLoadResult> = buildMap {
+        service.docs.forEach { (key, path) ->
+            val result = try {
+                val (resource, content) = loadOwnedResourceText(
+                    manifest,
+                    service,
+                    path,
+                    artifact = null,
+                    location = "${service.serviceRef}.docs.$key",
+                    options = options,
+                )
+                ManifestResourceLoadResult(path, resource, content)
+            } catch (error: Exception) {
+                ManifestResourceLoadResult(
+                    path = path,
+                    errorMessage = error.message ?: "Cannot load document '$path'",
+                )
+            }
+            put(key, result)
+        }
+    }
+
+    /**
+     * Convenience batch API that skips documents which cannot be loaded.
+     *
+     * Use [loadServiceDocResults] when callers need per-document failure details.
+     */
+    suspend fun loadAvailableServiceDocs(
+        manifest: ZenWaveManifest,
+        service: ManifestService,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): Map<String, String> = loadServiceDocResults(manifest, service, options)
+        .mapNotNull { (key, result) -> result.content?.let { key to it } }
+        .toMap()
 
     suspend fun loadServiceArtifacts(
         manifest: ZenWaveManifest,
@@ -175,6 +221,41 @@ class ZenWaveManifestLoader(
             options = options,
         )
     }
+
+    @JvmOverloads
+    fun resolveArtifactReference(
+        manifest: ZenWaveManifest,
+        service: ManifestService,
+        artifact: ManifestArtifact,
+        reference: String? = null,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): ManifestResolvedResource? {
+        val resource = buildArtifactCandidates(manifest, service, artifact, options).firstOrNull()
+            ?: return null
+        return reference.nonBlankOrNull()?.let(resource::resolveReference) ?: resource
+    }
+
+    @JvmOverloads
+    fun resolveDocumentReference(
+        manifest: ZenWaveManifest,
+        service: ManifestService,
+        documentKey: String,
+        reference: String? = null,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): ManifestResolvedResource? {
+        val resource = buildDocumentCandidates(manifest, service, documentKey, options).firstOrNull()
+            ?: return null
+        return reference.nonBlankOrNull()?.let(resource::resolveReference) ?: resource
+    }
+
+    @JvmOverloads
+    fun artifactReferenceUri(
+        manifest: ZenWaveManifest,
+        service: ManifestService,
+        artifact: ManifestArtifact,
+        reference: String? = null,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): String? = resolveArtifactReference(manifest, service, artifact, reference, options)?.referenceUri()
 
     private suspend fun loadOwnedResourceText(
         manifest: ZenWaveManifest,
