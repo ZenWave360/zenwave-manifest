@@ -54,6 +54,53 @@ class ManifestMavenCentralTest {
         }
     }
 
+    @Test
+    fun interpolatedRepositoryReadsEachServiceFromItsOwnRepositoryPath() = runTest {
+        val root = Files.createTempDirectory("manifest-central-repository-").toFile()
+        try {
+            writeJar(
+                File(root, "arcadia-editions/catalog-products-api/io/arcadia/products/1.1.0/products-1.1.0.jar"),
+                mapOf("contracts/api.yml" to "openapi: products"),
+            )
+            writeJar(
+                File(root, "arcadia-editions/catalog-inventory-api/io/arcadia/inventory/2.0.0/inventory-2.0.0.jar"),
+                mapOf("contracts/api.yml" to "openapi: inventory"),
+            )
+            val loader = ZenWaveManifestLoader()
+            val manifest = loader.parse(
+                File(root, "zenwave.yml").toURI().toString(),
+                """
+                config:
+                  groupIdExpression: io.arcadia
+                  artifactIdExpression: ${'$'}{service.id}
+                  contentResolution: [maven]
+                  sources:
+                    maven:
+                      provider: central
+                      server: ${root.toURI().toString().trimEnd('/')}
+                      repository: "arcadia-editions/${'$'}{service.repository}"
+                domains:
+                  catalog:
+                    services:
+                      products:
+                        repository: catalog-products-api
+                        artifacts: [{ type: openapi, path: contracts/api.yml, version: 1.1.0 }]
+                      inventory:
+                        repository: catalog-inventory-api
+                        artifacts: [{ type: openapi, path: contracts/api.yml, version: 2.0.0 }]
+                """.trimIndent(),
+            )
+            suspend fun text(serviceRef: String) = manifest.findService(serviceRef)!!.let { service ->
+                loader.loadArtifactText(manifest, service, service.artifacts.single())
+            }
+
+            assertEquals("openapi: products", text("catalog/products"))
+            assertEquals("openapi: inventory", text("catalog/inventory"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun manifestText(root: File, contentResolution: String): String = """
         config:
           groupIdExpression: io.arcadia
@@ -66,12 +113,13 @@ class ManifestMavenCentralTest {
               repository: maven2
         domains:
           commerce:
-            version: 1.0
+            name: Commerce
             services:
               orders:
                 artifacts:
                   - type: openapi
                     path: contracts/api.yml
+                    version: 1.0
     """.trimIndent()
 
     private fun writeJar(file: File, entries: Map<String, String>) {

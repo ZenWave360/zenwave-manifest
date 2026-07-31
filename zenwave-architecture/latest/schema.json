@@ -33,7 +33,7 @@
     },
     "runtimeExpression": {
       "allOf": [{ "$ref": "#/$defs/nonBlank" }],
-      "description": "Literal expression using domain.id, subdomain.id, service.id, explicit service.repository, domain.version, subdomain.version, service.version, artifact.version, artifact.path, explicit artifact.name, artifact.fileName, artifact.fileNameWithoutExtension, content.path, service.docs[key], groupId, artifactId, inherited version, or source-local server."
+      "description": "Literal expression using domain.id, subdomain.id, service.id, explicit service.repository, domain.version, subdomain.version, service.version, artifact.version, artifact.path, explicit artifact.name, artifact.fileName, artifact.fileNameWithoutExtension, content.path, service.docs[key], groupId, artifactId, effective version, or source-local server."
     },
     "config": {
       "type": "object",
@@ -136,12 +136,12 @@
     },
     "mavenSource": {
       "type": "object",
-      "description": "Read artifacts from an Artifactory or Maven Central-compatible repository.",
+      "description": "Read artifacts from an Artifactory, Maven Central-compatible, or GitHub Packages repository.",
       "additionalProperties": false,
       "properties": {
-        "provider": { "type": "string", "enum": ["artifactory", "central"] },
+        "provider": { "type": "string", "enum": ["artifactory", "central", "github"] },
         "server": { "$ref": "#/$defs/nonBlank" },
-        "repository": { "$ref": "#/$defs/nonBlank" }
+        "repository": { "$ref": "#/$defs/runtimeExpression" }
       },
       "required": ["provider"],
       "allOf": [
@@ -155,6 +155,15 @@
             "properties": {
               "server": { "default": "https://repo.maven.apache.org" },
               "repository": { "default": "maven2" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "provider": { "const": "github" } }, "required": ["provider"] },
+          "then": {
+            "required": ["repository"],
+            "properties": {
+              "server": { "default": "https://maven.pkg.github.com" }
             }
           }
         }
@@ -243,7 +252,7 @@
         "path": { "$ref": "#/$defs/nonBlank" },
         "version": { "$ref": "#/$defs/version" }
       },
-      "required": ["type", "path"]
+      "required": ["type", "path", "version"]
     },
     "requireActiveGit": {
       "if": { "$ref": "#/$defs/selectsGit" },

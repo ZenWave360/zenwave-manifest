@@ -83,6 +83,7 @@ class ManifestParserTest {
                     artifacts:
                       - type: openapi
                         path: contracts/orders.openapi.yaml
+                        version: 1.1.0
             """,
         )
 
@@ -108,10 +109,10 @@ class ManifestParserTest {
                 services:
                   s:
                     artifacts:
-                      - { type: openapi, path: contracts/orders.openapi.yaml }
-                      - { name: archive, type: other, path: archive.tar.gz }
-                      - { type: other, path: .gitignore }
-                      - { type: other, path: README }
+                      - { type: openapi, path: contracts/orders.openapi.yaml, version: 1.0.0 }
+                      - { name: archive, type: other, path: archive.tar.gz, version: 1.0.0 }
+                      - { type: other, path: .gitignore, version: 1.0.0 }
+                      - { type: other, path: README, version: 1.0.0 }
             """,
         )
         val artifacts = manifest.services.single().artifacts
@@ -125,7 +126,7 @@ class ManifestParserTest {
     }
 
     @Test
-    fun resolvesVersionByClosestDeclarationAndNeverUsesConfigVersion() = runTest {
+    fun artifactVersionIsExplicitOnlyWhileDocumentsInheritAndConfigVersionIsNeverUsed() = runTest {
         val manifest = parse(
             """
             config:
@@ -142,25 +143,75 @@ class ManifestParserTest {
                         docs: { summary: docs/SUMMARY.md }
                         artifacts:
                           - { type: openapi, path: api.yml, version: 4 }
-                          - { type: asyncapi, path: events.yml }
               inherited:
                 version: 5
                 services:
                   api:
-                    artifacts: [{ type: zdl, path: model.zdl }]
+                    docs: { summary: docs/SUMMARY.md }
+              subdomain-only:
+                subdomains:
+                  area:
+                    version: 6
+                    services:
+                      api:
+                        docs: { summary: docs/SUMMARY.md }
               unresolved:
                 services:
                   api:
-                    artifacts: [{ type: zdl, path: model.zdl }]
+                    docs: { summary: docs/SUMMARY.md }
             """,
         )
 
         val service = manifest.findService("sales/orders/api")!!
-        assertEquals("4", service.resolvedVersion(service.artifacts[0]))
-        assertEquals("3", service.resolvedVersion(service.artifacts[1]))
-        assertEquals("3", service.resolvedVersion())
-        assertEquals("5", manifest.findService("inherited/api")!!.resolvedVersion())
-        assertNull(manifest.findService("unresolved/api")!!.resolvedVersion())
+        assertEquals("4", service.artifacts.single().resolvedVersion)
+        assertEquals("3", service.documentVersion())
+        assertEquals("5", manifest.findService("inherited/api")!!.documentVersion())
+        assertEquals("6", manifest.findService("subdomain-only/area/api")!!.documentVersion())
+        assertNull(manifest.findService("unresolved/api")!!.documentVersion())
+        assertTrue(manifest.diagnostics.isEmpty(), manifest.diagnostics.toString())
+    }
+
+    @Test
+    fun artifactVersionIsRequiredAndBlankVersionsCountAsAbsent() = runTest {
+        val manifest = parse(
+            """
+            domains:
+              sales:
+                version: 1
+                subdomains:
+                  orders:
+                    version: 2
+                    services:
+                      api:
+                        version: 3
+                        artifacts:
+                          - { type: openapi, path: api.yml, version: 4 }
+                          - { type: asyncapi, path: events.yml }
+                          - { type: zdl, path: model.zdl, version: "   " }
+            """,
+        )
+
+        val artifacts = manifest.findService("sales/orders/api")!!.artifacts
+        assertEquals("4", artifacts[0].resolvedVersion)
+        assertNull(artifacts[1].version)
+        assertNull(artifacts[2].version)
+        assertEquals(
+            listOf(
+                ManifestDiagnostic(
+                    "Artifact requires version",
+                    ManifestDiagnosticSeverity.ERROR,
+                    "missing-artifact-field",
+                    "sales/orders/api.artifacts[1].version",
+                ),
+                ManifestDiagnostic(
+                    "Artifact requires version",
+                    ManifestDiagnosticSeverity.ERROR,
+                    "missing-artifact-field",
+                    "sales/orders/api.artifacts[2].version",
+                ),
+            ),
+            manifest.diagnostics,
+        )
     }
 
     @Test
@@ -184,7 +235,7 @@ class ManifestParserTest {
               sales:
                 services:
                   orders:
-                    artifacts: [{ type: openapi, path: api.yml }]
+                    artifacts: [{ type: openapi, path: api.yml, version: 1.0.0 }]
             """,
         )
 

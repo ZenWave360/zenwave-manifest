@@ -1,0 +1,28 @@
+# Code owners for files that can alter the release pipeline or execute code
+# while release/publication credentials are present.
+#
+# IMPORTANT: CODEOWNERS has no effect unless the 'main' branch ruleset requires
+# a pull request with "Require review from Code Owners" enabled. As a solo
+# maintainer you cannot approve your own PRs, so enable code-owner review only
+# once the project has a second trusted maintainer. Until then this file still
+# documents ownership and triggers review requests. See
+# https://github.com/ZenWave360/release-workflows for the shared pipeline's
+# security model.
+
+# CI/CD workflows, this file, and repository automation
+/.github/                       @ivangsa
+
+# Gradle build definitions: plugins and build logic declared here execute
+# during release builds and snapshot publication.
+/build.gradle.kts               @ivangsa
+/settings.gradle.kts            @ivangsa
+/gradle/                        @ivangsa
+/gradlew                        @ivangsa
+/gradlew.bat                    @ivangsa
+/manifest-core/build.gradle.kts @ivangsa
+
+# Release notes consumed verbatim by the release workflow.
+/release-notes/                 @ivangsa
+
+# Release documentation.
+/RELEASING.md                   @ivangsa

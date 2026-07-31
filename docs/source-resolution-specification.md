@@ -13,7 +13,9 @@ A service `repository` field is an optional non-blank string naming its source r
 
 Artifact `name` is optional and explicit-only. It is never derived from the artifact path. Service `docs` is a map whose non-blank keys use letters, numbers, `.`, `_`, and `-`; values are non-blank paths or supported absolute URIs.
 
-String and numeric versions normalize to strings. Content version inheritance is artifact, service, subdomain, domain, unresolved. Documents start at service. `config.version` and inspected content are not version sources.
+Artifact `version` is REQUIRED and MUST be non-blank; a blank value counts as absent and MUST be reported as a deterministic parse diagnostic. Domain, subdomain, and service `version` remain optional.
+
+String and numeric versions normalize to strings. An artifact's content version is its own declared `version` and MUST NOT inherit from the service, subdomain, or domain. A service document's content version inherits service, subdomain, domain, unresolved. `config.version` and inspected content are not version sources.
 
 ## 2. Static properties and runtime expressions
 
@@ -41,7 +43,7 @@ ${artifactId}
 ${version}
 ```
 
-`service.repository` exists only for an explicitly declared service repository. A selected expression using it when absent MUST fail as an unresolved runtime variable; implementations MUST NOT substitute `service.id`. `artifact.name` exists only for an explicitly named artifact. `artifact.fileName` is the final path segment. `artifact.fileNameWithoutExtension` removes only the final extension; dotfiles and extensionless filenames are unchanged. `${version}` is the inherited effective version. Each qualified version expression exposes only the explicit version on its named node and is unresolved when that declaration is absent.
+`service.repository` exists only for an explicitly declared service repository. A selected expression using it when absent MUST fail as an unresolved runtime variable; implementations MUST NOT substitute `service.id`. `artifact.name` exists only for an explicitly named artifact. `artifact.fileName` is the final path segment. `artifact.fileNameWithoutExtension` removes only the final extension; dotfiles and extensionless filenames are unchanged. `${version}` is the effective version of the operation: `artifact.version` for an artifact load and the inherited service, subdomain, or domain version for a document load. Each qualified version expression exposes only the explicit version on its named node and is unresolved when that declaration is absent.
 
 Bracket contents in `service.docs[key]` are literal. A missing key is unresolved before I/O; `${service.docs}` is invalid. `content.path` is the artifact path for an artifact load and the selected docs-map value for a document load. Loading all docs evaluates expressions separately for every entry.
 
@@ -146,11 +148,13 @@ The repository key belongs in the expression. A manifest may override the comple
 
 ### 5.5 Maven
 
-Maven is artifact-only. Providers are `artifactory` and `central`. It uses common coordinates and the standard primary JAR path:
+Maven is artifact-only. Providers are `artifactory`, `central`, and `github`. It uses common coordinates and the standard primary JAR path:
 
 ```text
 {groupId with dots replaced by slashes}/{artifactId}/{version}/{artifactId}-{version}.jar
 ```
+
+`repository` is REQUIRED and MUST be non-blank for all providers. `server` is static. `repository` is a runtime expression: static `config.properties` MUST expand first, and the remaining canonical variables MUST be interpolated per artifact during candidate construction. An unresolved name MUST fail as an unresolved runtime variable before I/O. Slash separators in the resolved value MUST be preserved and each segment MUST be encoded as a URL path segment.
 
 Artifactory requires `server` and `repository`. It reads the entry directly with Archive Entry Download:
 
@@ -160,7 +164,16 @@ ${server}/${repository}/{jar path}!/${artifact.path}
 
 The slash after `!` is mandatory.
 
-Central defaults to `server: https://repo.maven.apache.org` and `repository: maven2`; either may be overridden for a mirror. It downloads `${server}/${repository}/{jar path}` and reads `artifact.path` from the JAR locally. A missing entry is a candidate load failure and permits fallback.
+Central defaults to `server: https://repo.maven.apache.org` and `repository: maven2`; either may be overridden for a mirror or a per-service repository. It downloads `${server}/${repository}/{jar path}` and reads `artifact.path` from the JAR locally. A missing entry is a candidate load failure and permits fallback.
+
+GitHub Packages defaults to `server: https://maven.pkg.github.com` and requires an explicit `repository` as `{owner}/{repo}`. Like Central, it downloads `${server}/${repository}/{jar path}` and reads `artifact.path` from the JAR locally:
+
+```yaml
+maven:
+  provider: github
+  server: https://maven.pkg.github.com
+  repository: "arcadia-editions/${service.repository}"
+```
 
 ## 6. Applicability
 
@@ -181,6 +194,7 @@ Implementations MUST diagnose before transport I/O where possible:
 - missing source server, repository, or required expression;
 - unresolved or invalid runtime expression and docs lookup;
 - recursive or missing common coordinate;
+- missing or blank artifact `version`;
 - missing content version when selected by a source;
 - preferred source not active in the ordered list.
 

@@ -3,6 +3,7 @@ package io.zenwave360.manifest
 import io.zenwave360.jsonrefparser.RefParser
 import io.zenwave360.jsonrefparser.io.DocumentLoader
 import io.zenwave360.jsonrefparser.io.defaultLoaders
+import kotlin.jvm.JvmOverloads
 
 class ManifestResolutionException(message: String) : IllegalArgumentException(message)
 
@@ -87,6 +88,51 @@ class ZenWaveManifestLoader(
             options = options,
         ).second
     }
+
+    /**
+     * Loads every configured service document independently, retaining failures as values.
+     *
+     * This is the preferred batch API for LSP/MCP and other tooling that should report a broken
+     * document without discarding documents that loaded successfully.
+     */
+    suspend fun loadServiceDocResults(
+        manifest: ZenWaveManifest,
+        service: ManifestService,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): Map<String, ManifestResourceLoadResult> = buildMap {
+        service.docs.forEach { (key, path) ->
+            val result = try {
+                val (resource, content) = loadOwnedResourceText(
+                    manifest,
+                    service,
+                    path,
+                    artifact = null,
+                    location = "${service.serviceRef}.docs.$key",
+                    options = options,
+                )
+                ManifestResourceLoadResult(path, resource, content)
+            } catch (error: Exception) {
+                ManifestResourceLoadResult(
+                    path = path,
+                    errorMessage = error.message ?: "Cannot load document '$path'",
+                )
+            }
+            put(key, result)
+        }
+    }
+
+    /**
+     * Convenience batch API that skips documents which cannot be loaded.
+     *
+     * Use [loadServiceDocResults] when callers need per-document failure details.
+     */
+    suspend fun loadAvailableServiceDocs(
+        manifest: ZenWaveManifest,
+        service: ManifestService,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): Map<String, String> = loadServiceDocResults(manifest, service, options)
+        .mapNotNull { (key, result) -> result.content?.let { key to it } }
+        .toMap()
 
     suspend fun loadServiceArtifacts(
         manifest: ZenWaveManifest,
@@ -175,6 +221,41 @@ class ZenWaveManifestLoader(
             options = options,
         )
     }
+
+    @JvmOverloads
+    fun resolveArtifactReference(
+        manifest: ZenWaveManifest,
+        service: ManifestService,
+        artifact: ManifestArtifact,
+        reference: String? = null,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): ManifestResolvedResource? {
+        val resource = buildArtifactCandidates(manifest, service, artifact, options).firstOrNull()
+            ?: return null
+        return reference.nonBlankOrNull()?.let(resource::resolveReference) ?: resource
+    }
+
+    @JvmOverloads
+    fun resolveDocumentReference(
+        manifest: ZenWaveManifest,
+        service: ManifestService,
+        documentKey: String,
+        reference: String? = null,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): ManifestResolvedResource? {
+        val resource = buildDocumentCandidates(manifest, service, documentKey, options).firstOrNull()
+            ?: return null
+        return reference.nonBlankOrNull()?.let(resource::resolveReference) ?: resource
+    }
+
+    @JvmOverloads
+    fun artifactReferenceUri(
+        manifest: ZenWaveManifest,
+        service: ManifestService,
+        artifact: ManifestArtifact,
+        reference: String? = null,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): String? = resolveArtifactReference(manifest, service, artifact, reference, options)?.referenceUri()
 
     private suspend fun loadOwnedResourceText(
         manifest: ZenWaveManifest,
@@ -338,11 +419,18 @@ class ZenWaveManifestLoader(
         val groupId = context.groupId.requireCoordinate("groupId")
         val artifactId = context.artifactId.requireCoordinate("artifactId")
         val version = context.version.requireCoordinate("version")
+        val repository = interpolateRuntime(
+            ManifestSourceName.MAVEN,
+            source.repository,
+            context,
+            source.server,
+            encode = false,
+        )
         val groupPath = groupId.split('.').joinToString("/") { ManifestReferenceResolver.encodePathSegment(it) }
         val encodedArtifactId = ManifestReferenceResolver.encodePathSegment(artifactId)
         val encodedVersion = ManifestReferenceResolver.encodePathSegment(version)
         val jarPath = "$groupPath/$encodedArtifactId/$encodedVersion/$encodedArtifactId-$encodedVersion.jar"
-        val base = "${source.server.trimEnd('/')}/${ManifestReferenceResolver.encodePath(source.repository.trim('/'))}/$jarPath"
+        val base = "${source.server.trimEnd('/')}/${ManifestReferenceResolver.encodePath(repository.trim('/'))}/$jarPath"
         return when (source.provider) {
             MAVEN_ARTIFACTORY -> listOf(
                 ManifestResolvedResource(
@@ -350,7 +438,7 @@ class ZenWaveManifestLoader(
                     "$base!/${ManifestReferenceResolver.encodePath(artifact.path.trimStart('/'))}",
                 ),
             )
-            MAVEN_CENTRAL -> listOf(
+            MAVEN_CENTRAL, MAVEN_GITHUB -> listOf(
                 ManifestResolvedResource(ManifestSourceName.MAVEN, base, archiveEntry = artifact.path),
             )
             else -> throw ManifestResolutionException("Invalid Maven provider '${source.provider}'")
@@ -457,7 +545,7 @@ class ZenWaveManifestLoader(
             artifact = artifact,
             contentPath = contentPath,
             docs = service.docs,
-            version = service.resolvedVersion(artifact),
+            version = if (artifact == null) service.documentVersion() else artifact.resolvedVersion,
         )
 
     private fun String?.requireCoordinate(name: String): String =
@@ -592,16 +680,18 @@ class ZenWaveManifestLoader(
                 expandStatic(it, "$serviceRef.docs", properties, diagnostics, allowRuntime = false)
             }
         }
-        val artifacts = value.listAt("artifacts").mapNotNull { rawArtifact ->
+        val artifacts = value.listAt("artifacts").mapIndexedNotNull { index, rawArtifact ->
             val artifact = rawArtifact.asMap()
-            val type = artifact["type"] as? String ?: return@mapNotNull null
-            val rawPath = artifact["path"] as? String ?: return@mapNotNull null
+            val type = artifact["type"] as? String ?: return@mapIndexedNotNull null
+            val rawPath = artifact["path"] as? String ?: return@mapIndexedNotNull null
+            val version = artifact["version"].stringValue()
+            if (version == null) diagnostics += missingArtifactField(serviceRef, index, "version")
             ManifestArtifact(
                 name = (artifact["name"] as? String).nonBlankOrNull(),
                 artifactId = (artifact["artifactId"] as? String).nonBlankOrNull(),
                 type = type,
                 path = expandStatic(rawPath, "$serviceRef.artifacts.path", properties, diagnostics, allowRuntime = false),
-                version = artifact["version"].stringValue(),
+                version = version,
             )
         }
         return ManifestService(
@@ -649,9 +739,10 @@ class ZenWaveManifestLoader(
         fun expression(raw: Any?, default: String, location: String): String = expandStatic(
             raw?.toString() ?: default, location, properties, diagnostics, allowRuntime = true,
         )
-        fun optionalExpression(raw: Any?, location: String): String? = raw?.toString()?.let {
-            expandStatic(it, location, properties, diagnostics, allowRuntime = true)
-        }
+        fun optionalExpression(raw: Any?, default: String? = null, location: String): String? =
+            (raw?.toString() ?: default)?.let {
+                expandStatic(it, location, properties, diagnostics, allowRuntime = true)
+            }
         fun static(raw: Any?, default: String? = null, location: String): String? =
             (raw?.toString() ?: default)?.let { expandStatic(it, location, properties, diagnostics, allowRuntime = false) }
 
@@ -680,7 +771,7 @@ class ZenWaveManifestLoader(
                     ),
                     contentUrlExpression = optionalExpression(
                         it["contentUrlExpression"],
-                        "config.sources.git.contentUrlExpression",
+                        location = "config.sources.git.contentUrlExpression",
                     ),
                 )
             },
@@ -689,7 +780,7 @@ class ZenWaveManifestLoader(
                     server = static(it["server"], location = "config.sources.apicurio.server").orEmpty(),
                     contentUrlExpression = optionalExpression(
                         it["contentUrlExpression"],
-                        "config.sources.apicurio.contentUrlExpression",
+                        location = "config.sources.apicurio.contentUrlExpression",
                     ),
                 )
             },
@@ -704,16 +795,21 @@ class ZenWaveManifestLoader(
                 )
             },
             maven = maven?.let {
+                val (serverDefault, repositoryDefault) = when (mavenProvider) {
+                    MAVEN_CENTRAL -> CENTRAL_SERVER to CENTRAL_REPOSITORY
+                    MAVEN_GITHUB -> GITHUB_SERVER to null
+                    else -> null to null
+                }
                 ManifestMavenSource(
                     provider = mavenProvider,
                     server = static(
                         it["server"],
-                        if (mavenProvider == MAVEN_CENTRAL) CENTRAL_SERVER else null,
+                        serverDefault,
                         "config.sources.maven.server",
                     ).orEmpty(),
-                    repository = static(
+                    repository = optionalExpression(
                         it["repository"],
-                        if (mavenProvider == MAVEN_CENTRAL) CENTRAL_REPOSITORY else null,
+                        repositoryDefault,
                         "config.sources.maven.repository",
                     ).orEmpty(),
                 )
@@ -780,6 +876,10 @@ class ZenWaveManifestLoader(
 
     private fun missingSourceField(source: String, field: String) = validationDiagnostic(
         "Source '$source' requires $field", "missing-source-read-configuration", "config.sources.$source.$field",
+    )
+
+    private fun missingArtifactField(serviceRef: String, index: Int, field: String) = validationDiagnostic(
+        "Artifact requires $field", "missing-artifact-field", "$serviceRef.artifacts[$index].$field",
     )
 
     private fun unconfiguredSource(source: String, location: String) = validationDiagnostic(
@@ -872,14 +972,16 @@ class ZenWaveManifestLoader(
         const val GIT_GENERIC = "generic"
         const val MAVEN_ARTIFACTORY = "artifactory"
         const val MAVEN_CENTRAL = "central"
+        const val MAVEN_GITHUB = "github"
         const val CENTRAL_SERVER = "https://repo.maven.apache.org"
         const val CENTRAL_REPOSITORY = "maven2"
+        const val GITHUB_SERVER = "https://maven.pkg.github.com"
         const val APICURIO_DEFAULT_EXPRESSION =
             "\${server}/apis/registry/v3/groups/\${service.id}/artifacts/\${artifact.path}/versions/\${version}/content"
         const val ARTIFACTORY_DEFAULT_EXPRESSION =
             "\${server}/artifactory/contracts/\${domain.id}/\${subdomain.id}/\${service.id}/\${version}/\${content.path}"
         val GIT_PROVIDERS = setOf(GIT_GITHUB, GIT_GITLAB, GIT_BITBUCKET, GIT_GENERIC)
-        val MAVEN_PROVIDERS = setOf(MAVEN_ARTIFACTORY, MAVEN_CENTRAL)
+        val MAVEN_PROVIDERS = setOf(MAVEN_ARTIFACTORY, MAVEN_CENTRAL, MAVEN_GITHUB)
         val PLACEHOLDER = Regex("""[${'$'}][{]([^}]*)[}]""")
         val DOC_LOOKUP = Regex("""service[.]docs\x5B[A-Za-z0-9._-]+\x5D""")
         val CANONICAL_RUNTIME_VARIABLES = setOf(

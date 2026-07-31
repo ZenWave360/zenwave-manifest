@@ -27,7 +27,7 @@ class ManifestResolverTest {
                   products:
                     id: catalog.catalog-management.catalog-products
                     repository: catalog-products-api
-                    artifacts: [{ type: openapi, path: contracts/openapi.yml }]
+                    artifacts: [{ type: openapi, path: contracts/openapi.yml, version: 1.0.0 }]
             """.trimIndent(),
         )
         val service = manifest.services.single()
@@ -56,7 +56,7 @@ class ManifestResolverTest {
                   products:
                     id: catalog.catalog-management.catalog-products
                     repository: catalog-products-api
-                    artifacts: [{ type: openapi, path: contracts/openapi.yml }]
+                    artifacts: [{ type: openapi, path: contracts/openapi.yml, version: 1.0.0 }]
             """.trimIndent(),
         )
         val service = manifest.services.single()
@@ -79,7 +79,7 @@ class ManifestResolverTest {
                 services:
                   products:
                     id: catalog.catalog-management.catalog-products
-                    artifacts: [{ type: openapi, path: contracts/openapi.yml }]
+                    artifacts: [{ type: openapi, path: contracts/openapi.yml, version: 1.0.0 }]
             """.trimIndent(),
         )
         val service = manifest.services.single()
@@ -104,12 +104,12 @@ class ManifestResolverTest {
                 services:
                   orders:
                     id: orders-api
-                    artifacts: [{ type: openapi, path: contracts/orders.openapi.yaml }]
+                    artifacts: [{ type: openapi, path: contracts/orders.openapi.yaml, version: 1.0.0 }]
                 subdomains:
                   fulfillment:
                     services:
                       shipping:
-                        artifacts: [{ type: asyncapi, path: contracts/shipping.asyncapi.yaml }]
+                        artifacts: [{ type: asyncapi, path: contracts/shipping.asyncapi.yaml, version: 1.0.0 }]
             """.trimIndent(),
         )
 
@@ -179,7 +179,7 @@ class ManifestResolverTest {
     }
 
     @Test
-    fun qualifiedVersionsExposeDeclarationsWhileVersionPreservesInheritance() = runTest {
+    fun qualifiedVersionsExposeDeclarationsWhileArtifactVersionNeverInherits() = runTest {
         val loader = ZenWaveManifestLoader()
         val manifest = loader.parse(
             "file:///work/zenwave.yml",
@@ -219,10 +219,56 @@ class ManifestResolverTest {
             loader.buildArtifactCandidates(manifest, service, artifact).single().uri,
         )
 
-        val inheritedArtifact = artifact.copy(version = null)
-        val inheritedVariables = loader.artifactResolutionContext(manifest, service, inheritedArtifact).variables()
-        assertNull(inheritedVariables["artifact.version"])
-        assertEquals("3", inheritedVariables["version"])
+        val versionlessArtifact = artifact.copy(version = null)
+        val versionlessVariables = loader.artifactResolutionContext(manifest, service, versionlessArtifact).variables()
+        assertNull(versionlessVariables["artifact.version"])
+        assertNull(versionlessVariables["version"])
+        assertEquals("3", versionlessVariables["service.version"])
+        assertEquals(
+            "Source 'artifactory' expression '${'$'}{server}/${'$'}{domain.version}/${'$'}{subdomain.version}/" +
+                "${'$'}{service.version}/${'$'}{artifact.version}/${'$'}{version}/${'$'}{content.path}' " +
+                "has unresolved runtime variables: artifact.version, version",
+            assertFailsWith<ManifestResolutionException> {
+                loader.buildArtifactCandidates(manifest, service, versionlessArtifact)
+            }.message,
+        )
+    }
+
+    @Test
+    fun serviceDocumentsStillInheritServiceSubdomainAndDomainVersions() = runTest {
+        val loader = ZenWaveManifestLoader()
+        val manifest = loader.parse(
+            "file:///work/zenwave.yml",
+            """
+            config:
+              contentResolution: [artifactory]
+              sources:
+                artifactory:
+                  server: https://artifacts.example.com
+                  contentUrlExpression: ${'$'}{server}/${'$'}{version}/${'$'}{content.path}
+            domains:
+              commerce:
+                version: 1
+                services:
+                  orders:
+                    docs: { summary: docs/SUMMARY.md }
+                subdomains:
+                  fulfillment:
+                    version: 2
+                    services:
+                      shipping:
+                        docs: { summary: docs/SUMMARY.md }
+                      returns:
+                        version: 3
+                        docs: { summary: docs/SUMMARY.md }
+            """.trimIndent(),
+        )
+        fun summaryUri(serviceRef: String) =
+            loader.buildDocumentCandidates(manifest, manifest.findService(serviceRef)!!, "summary").single().uri
+
+        assertEquals("https://artifacts.example.com/1/docs/SUMMARY.md", summaryUri("commerce/orders"))
+        assertEquals("https://artifacts.example.com/2/docs/SUMMARY.md", summaryUri("commerce/fulfillment/shipping"))
+        assertEquals("https://artifacts.example.com/3/docs/SUMMARY.md", summaryUri("commerce/fulfillment/returns"))
     }
 
     @Test
@@ -334,6 +380,7 @@ class ManifestResolverTest {
                       - artifactId: orders-openapi
                         type: openapi
                         path: contracts/orders.openapi.yaml
+                        version: 1.1.0
             """.trimIndent(),
         )
         val service = manifest.services.single()
@@ -391,10 +438,11 @@ class ManifestResolverTest {
     fun knownGitProvidersBuildImmutableTagUrlsAndNormalizeDirectServiceSegments() = runTest {
         val loader = ZenWaveManifestLoader()
         suspend fun providerUrl(provider: String, nested: Boolean = false): String {
+            val artifacts = "artifacts: [{ type: openapi, path: api.yml, version: 1.2.3 }]"
             val hierarchy = if (nested) {
-                "subdomains: { fulfillment: { services: { orders: { artifacts: [{ type: openapi, path: api.yml }] } } } }"
+                "subdomains: { fulfillment: { services: { orders: { $artifacts } } } }"
             } else {
-                "services: { orders: { artifacts: [{ type: openapi, path: api.yml }] } }"
+                "services: { orders: { $artifacts } }"
             }
             val manifest = loader.parse(
                 "file:///work/zenwave.yml",
@@ -405,7 +453,7 @@ class ManifestResolverTest {
                     git: { provider: $provider }
                 domains:
                   commerce:
-                    version: 1.2.3
+                    name: Commerce
                     $hierarchy
                 """.trimIndent(),
             )
@@ -497,6 +545,149 @@ class ManifestResolverTest {
     }
 
     @Test
+    fun mavenRepositoryInterpolatesPerServiceAndProducesDistinctUrls() = runTest {
+        val loader = ZenWaveManifestLoader()
+        val manifest = loader.parse(
+            "file:///work/zenwave.yml",
+            """
+            config:
+              groupIdExpression: io.arcadia
+              artifactIdExpression: ${'$'}{service.id}
+              contentResolution: [maven]
+              sources:
+                maven:
+                  provider: central
+                  server: https://maven.pkg.github.com
+                  repository: "arcadia-editions/${'$'}{service.repository}"
+            domains:
+              catalog:
+                services:
+                  products:
+                    repository: catalog-products-api
+                    artifacts: [{ type: openapi, path: contracts/openapi.yml, version: 1.1.0 }]
+                  inventory:
+                    repository: catalog-inventory-api
+                    artifacts: [{ type: openapi, path: contracts/openapi.yml, version: 2.0.0 }]
+            """.trimIndent(),
+        )
+        assertEquals("arcadia-editions/${'$'}{service.repository}", manifest.config.sources.maven!!.repository)
+        fun candidate(serviceRef: String) = manifest.findService(serviceRef)!!.let { service ->
+            loader.buildArtifactCandidates(manifest, service, service.artifacts.single()).single()
+        }
+
+        assertEquals(
+            "https://maven.pkg.github.com/arcadia-editions/catalog-products-api/io/arcadia/products/1.1.0/products-1.1.0.jar",
+            candidate("catalog/products").uri,
+        )
+        assertEquals("contracts/openapi.yml", candidate("catalog/products").archiveEntry)
+        assertEquals(
+            "https://maven.pkg.github.com/arcadia-editions/catalog-inventory-api/io/arcadia/inventory/2.0.0/inventory-2.0.0.jar",
+            candidate("catalog/inventory").uri,
+        )
+    }
+
+    @Test
+    fun mavenRepositoryKeepsSlashSeparatorsWhileEncodingEachSegment() = runTest {
+        val loader = ZenWaveManifestLoader()
+        val manifest = loader.parse(
+            "file:///work/zenwave.yml",
+            """
+            config:
+              groupIdExpression: io.arcadia
+              artifactIdExpression: orders-api
+              contentResolution: [maven]
+              sources:
+                maven:
+                  provider: artifactory
+                  server: https://artifacts.example.com/artifactory
+                  repository: "/${'$'}{service.repository}/maven releases/"
+            domains:
+              commerce:
+                services:
+                  orders:
+                    repository: arcadia-editions/orders-api
+                    artifacts: [{ type: openapi, path: contracts/api.yml, version: 1.0.0 }]
+            """.trimIndent(),
+        )
+
+        assertEquals(
+            "https://artifacts.example.com/artifactory/arcadia-editions/orders-api/maven%20releases" +
+                "/io/arcadia/orders-api/1.0.0/orders-api-1.0.0.jar!/contracts/api.yml",
+            loader.buildArtifactCandidates(
+                manifest,
+                manifest.services.single(),
+                manifest.services.single().artifacts.single(),
+            ).single().uri,
+        )
+    }
+
+    @Test
+    fun unresolvedMavenRepositoryVariableFailsDeterministicallyBeforeIo() = runTest {
+        val loader = ZenWaveManifestLoader(emptyList(), archiveEntryLoader = null)
+        val manifest = parseArtifactManifest(
+            loader,
+            config = """
+            groupIdExpression: io.arcadia
+            contentResolution: [maven]
+            sources:
+              maven:
+                provider: central
+                server: https://maven.pkg.github.com
+                repository: "arcadia-editions/${'$'}{service.repository}"
+            """,
+            version = "1.1.0",
+        )
+
+        assertEquals(
+            "Source 'maven' expression 'arcadia-editions/${'$'}{service.repository}' " +
+                "has unresolved runtime variables: service.repository",
+            assertFailsWith<ManifestResolutionException> {
+                loader.buildArtifactCandidates(
+                    manifest,
+                    manifest.services.single(),
+                    manifest.services.single().artifacts.single(),
+                )
+            }.message,
+        )
+    }
+
+    @Test
+    fun staticPropertiesExpandInMavenRepositoryBeforeRuntimeInterpolation() = runTest {
+        val loader = ZenWaveManifestLoader()
+        val manifest = loader.parse(
+            "file:///work/zenwave.yml",
+            """
+            config:
+              properties:
+                owner: arcadia-editions
+              groupIdExpression: io.arcadia
+              artifactIdExpression: ${'$'}{service.id}
+              contentResolution: [maven]
+              sources:
+                maven:
+                  provider: central
+                  server: https://maven.pkg.github.com
+                  repository: "${'$'}{owner}/${'$'}{service.repository}"
+            domains:
+              catalog:
+                services:
+                  products:
+                    repository: catalog-products-api
+                    artifacts: [{ type: openapi, path: contracts/openapi.yml, version: 1.1.0 }]
+            """.trimIndent(),
+        )
+        assertEquals("arcadia-editions/${'$'}{service.repository}", manifest.config.sources.maven!!.repository)
+        assertEquals(
+            "https://maven.pkg.github.com/arcadia-editions/catalog-products-api/io/arcadia/products/1.1.0/products-1.1.0.jar",
+            loader.buildArtifactCandidates(
+                manifest,
+                manifest.services.single(),
+                manifest.services.single().artifacts.single(),
+            ).single().uri,
+        )
+    }
+
+    @Test
     fun artifactOnlySourcesAreSkippedForDocsAndFallbackUsesActiveOrder() = runTest {
         val expected = "https://artifacts.example.com/contracts/orders/docs/SUMMARY.md"
         val loader = ZenWaveManifestLoader(listOf(InMemoryLoader(expected, "# Orders")))
@@ -570,7 +761,7 @@ class ManifestResolverTest {
         loader: ZenWaveManifestLoader,
         uri: String = "file:///work/zenwave.yml",
         config: String,
-        version: String? = null,
+        version: String = "1.0.0",
         artifactPath: String = "openapi.yml",
     ): ZenWaveManifest = loader.parse(
         uri,
@@ -579,12 +770,13 @@ class ManifestResolverTest {
             config.trimIndent().prependIndent("  "),
             "domains:",
             "  commerce:",
-            "    ${version?.let { "version: $it" } ?: "name: Commerce"}",
+            "    name: Commerce",
             "    services:",
             "      orders:",
             "        artifacts:",
             "          - type: openapi",
             "            path: $artifactPath",
+            "            version: $version",
         ).joinToString("\n"),
     )
 }

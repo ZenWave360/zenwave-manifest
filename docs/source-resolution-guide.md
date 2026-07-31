@@ -17,7 +17,7 @@ Hierarchy IDs resolve from an explicit non-blank `id` or the node's YAML map key
 | `${domain.version}` | Explicit owning domain version, when declared. |
 | `${subdomain.version}` | Explicit owning subdomain version, when declared. |
 | `${service.version}` | Explicit owning service version, when declared. |
-| `${artifact.version}` | Explicit current artifact version, when declared. |
+| `${artifact.version}` | Declared current artifact version; artifact `version` is a required field. |
 | `${artifact.path}` | Complete declared artifact path. |
 | `${artifact.name}` | Explicit artifact `name`; absent for an unnamed artifact. |
 | `${artifact.fileName}` | Last path segment including all extensions. |
@@ -26,7 +26,7 @@ Hierarchy IDs resolve from an explicit non-blank `id` or the node's YAML map key
 | `${service.docs[key]}` | Value of a literal document-map key. |
 | `${groupId}` | Resolved common group coordinate. |
 | `${artifactId}` | Resolved common artifact coordinate. |
-| `${version}` | Inherited operation version. |
+| `${version}` | Effective operation version: `artifact.version` for an artifact load, the inherited service, subdomain, or domain version for a document load. |
 
 `service.id` is the stable architecture identity; `service.repository` is an explicit source-control locator. The repository is never derived from the ID. For example, a domain-qualified identity can map to a short repository slug:
 
@@ -54,7 +54,7 @@ docs:
 
 the lookups resolve to their corresponding paths. `${service.docs}` denotes a map and is invalid. An invalid or missing lookup fails before I/O. When `loadServiceDocs` iterates the map, `${content.path}` is evaluated separately as `docs/SUMMARY.md`, `docs/EVENT_CATALOG.md`, and `docs/README.md`.
 
-`${version}` inherits in this order: artifact, service, subdomain, domain. Documents begin at service. Qualified expressions such as `${service.version}` expose only that node's explicit declaration and are unresolved when it is absent; they do not inherit. Blank versions are absent, and YAML strings and numbers become strings. `config.version` is not content versioning, and the resolver never opens content to discover a version.
+`${version}` depends on what is being loaded. For an artifact it is exactly `artifact.version`; `version` is a required artifact field and does not inherit from the service, subdomain, or domain. For a service document it inherits service, then subdomain, then domain. Qualified expressions such as `${service.version}` expose only that node's explicit declaration and are unresolved when it is absent; they do not inherit. Blank versions are absent — an artifact whose `version` is missing or whitespace-only reports the `missing-artifact-field` diagnostic at parse time — and YAML strings and numbers become strings. `config.version` is not content versioning, and the resolver never opens content to discover a version.
 
 ## Static and runtime interpolation
 
@@ -288,6 +288,12 @@ Maven is artifact-only and uses common `groupId`, `artifactId`, and `version`. T
 {groupId with dots replaced by slashes}/{artifactId}/{version}/{artifactId}-{version}.jar
 ```
 
+`server` is a static value, resolved once at load time. `repository` is required, must be non-blank, and is a runtime expression: static `config.properties` expand first, then the remaining `${name}` placeholders are interpolated once per artifact, exactly like `git.contentUrlExpression`. An unresolved name fails with the standard unresolved-runtime-variable diagnostic before any I/O. Slashes in the resolved value stay path separators; every segment between them is URL-encoded.
+
+That makes a single Maven source serve services that publish to different repositories, such as GitHub Packages, whose Maven URLs embed the owning GitHub repository.
+
+The three providers build the same JAR URL and differ only in who opens it. `artifactory` appends `!/${artifact.path}` so the server returns the entry directly. `central` and `github` download the complete JAR and read the declared entry locally.
+
 ### Artifactory Maven
 
 ```yaml
@@ -314,13 +320,31 @@ maven:
   repository: maven2
 ```
 
-The server and repository have the shown defaults and may be overridden for a mirror or compatible proxy. The resolver downloads the primary JAR:
+The server and repository have the shown defaults and may be overridden for a mirror, compatible proxy, or a per-service repository expression. The resolver downloads the primary JAR:
 
 ```text
 https://repo.maven.apache.org/maven2/io/arcadia/orders/orders-openapi/1.1.0/orders-openapi-1.1.0.jar
 ```
 
 It then reads `contracts/orders.openapi.yaml` locally. A missing entry is a candidate load failure, so ordered fallback continues. JVM provides extraction directly; a JavaScript host supplies an archive-entry loader when it needs Central extraction.
+
+### GitHub Packages
+
+```yaml
+maven:
+  provider: github
+  repository: "arcadia-editions/${service.repository}"
+```
+
+GitHub Packages serves a standard Maven layout over plain HTTP and has no Artifactory-style archive-entry endpoint, so entries are extracted client-side. `provider: github` defaults `server` to `https://maven.pkg.github.com` and requires `repository` as `{owner}/{repo}`. Set `server` explicitly only for GitHub Enterprise. Because `repository` is a runtime expression, one declaration serves every service that publishes to its own repository.
+
+For `${service.repository}` resolving to `catalog-products-api`, `io.arcadia:products:1.1.0`, and artifact `contracts/api.yml`, the JAR URL is:
+
+```text
+https://maven.pkg.github.com/arcadia-editions/catalog-products-api/io/arcadia/products/1.1.0/products-1.1.0.jar
+```
+
+Like `central`, the resolver downloads the complete JAR and reads the declared entry locally. A missing entry is a candidate load failure, so ordered fallback continues.
 
 ## Source applicability
 

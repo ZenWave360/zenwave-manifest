@@ -1,12 +1,13 @@
 # ZenWave Manifest
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.zenwave360.manifest/manifest-core.svg?label=Maven%20Central&logo=apachemaven)](https://search.maven.org/artifact/io.zenwave360.manifest/manifest-core)
-[![build](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/main.yml)
+[![build](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/publish-maven-snapshots.yml/badge.svg?branch=develop)](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/publish-maven-snapshots.yml)
+[![line coverage](https://raw.githubusercontent.com/ZenWave360/zenwave-manifest/badges/coverage.svg)](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/main.yml)
+[![branch coverage](https://raw.githubusercontent.com/ZenWave360/zenwave-manifest/badges/branches.svg)](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/main.yml)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/ZenWave360/zenwave-manifest/blob/main/LICENSE)
 
 ZenWave Manifest is the read-only architecture contract shared by ZenWave tools. A hand-authored `zenwave-architecture.yml` describes domains, services, documentation, and artifacts; the Kotlin Multiplatform library resolves that content deterministically from workspace, Git, Apicurio Registry, generic Artifactory, or Maven sources.
 
-Version 1 only reads content. It does not publish, upload, register, clone, push, commit, tag, sign, or deploy manifest-managed content. The repository's own Gradle/Maven release setup only publishes the `manifest-core` library.
 
 - Versioned schema: `https://schemas.zenwave360.io/zenwave-architecture/1.0/schema.json`
 - Latest schema: `https://schemas.zenwave360.io/zenwave-architecture/latest/schema.json`
@@ -73,9 +74,10 @@ domains:
             artifacts:
               - type: asyncapi
                 path: contracts/shipping.asyncapi.yaml
+                version: 2.0.0
 ```
 
-Domains, subdomains, and services use a non-blank explicit `id` when present and otherwise use their YAML map key. A direct service has an empty `subdomain.id`. The primary example deliberately omits artifact `name` and `artifactId`: names are never derived from paths, while artifact IDs use their configured fallback.
+Domains, subdomains, and services use a non-blank explicit `id` when present and otherwise use their YAML map key. A direct service has an empty `subdomain.id`. Every artifact declares its own required `version`; domain, subdomain, and service versions are optional and apply only to service documents. The primary example deliberately omits artifact `name` and `artifactId`: names are never derived from paths, while artifact IDs use their configured fallback.
 
 For a manifest stored at `/work/architecture/manifests/zenwave-architecture.yml`, the `../../` prefix reaches `/work`; the first artifact's workspace candidate is:
 
@@ -108,7 +110,7 @@ Static `config.properties` substitution runs first. It cannot override canonical
 | `${domain.version}` | Explicit domain version, when declared. |
 | `${subdomain.version}` | Explicit subdomain version, when declared. |
 | `${service.version}` | Explicit service version, when declared. |
-| `${artifact.version}` | Explicit artifact version, when declared. |
+| `${artifact.version}` | Declared artifact version; artifact `version` is required. |
 | `${artifact.path}` | Complete declared artifact path. |
 | `${artifact.name}` | Explicit non-blank artifact name only; unresolved when omitted. |
 | `${artifact.fileName}` | Final artifact path segment, with every extension. |
@@ -117,7 +119,7 @@ Static `config.properties` substitution runs first. It cannot override canonical
 | `${service.docs[key]}` | Declared document path for the literal key. |
 | `${groupId}` | Common resolved group coordinate. |
 | `${artifactId}` | Common resolved artifact coordinate. |
-| `${version}` | Inherited content version. |
+| `${version}` | Effective content version: `artifact.version` for an artifact, the inherited service, subdomain, or domain version for a service document. |
 
 Service architecture identity and source-control location are deliberately separate. Repository identity is never inferred from `service.id`:
 
@@ -130,6 +132,10 @@ config:
       provider: github
       server: https://github.com
       contentUrlExpression: "${server}/arcadia-editions/${service.repository}/raw/main/${content.path}"
+    maven:
+      provider: github
+      server: https://maven.pkg.github.com
+      repository: "arcadia-editions/${service.repository}"
 domains:
   catalog:
     services:
@@ -137,6 +143,8 @@ domains:
         id: catalog.catalog-management.catalog-products
         repository: catalog-products-api
 ```
+
+`maven.repository` accepts the same runtime expressions and is resolved once per artifact, so services publishing to their own GitHub Packages repositories share a single Maven source declaration.
 
 If `repository` is omitted, `${service.repository}` stays unresolved and any selected expression that uses it fails with the standard unresolved-runtime-variable diagnostic.
 
@@ -160,7 +168,7 @@ ${service.docs[readme]}  = docs/README.md
 
 `${service.docs}` alone, an invalid lookup, or a missing key fails before I/O. Loading all docs evaluates the source URL once per entry, so `${content.path}` changes from `docs/SUMMARY.md` to `docs/EVENT_CATALOG.md` and then `docs/README.md`.
 
-`${version}` preserves effective-version inheritance: artifact, service, subdomain, then domain. Documents begin at service. The qualified version expressions expose only their corresponding explicit declaration and do not inherit. YAML strings and numbers normalize to strings; `config.version` and artifact contents never supply a content version.
+`${version}` resolves differently for the two kinds of content. For an artifact it is exactly `artifact.version`, which is a required field and never inherits from the service, subdomain, or domain. For a service document it inherits service, then subdomain, then domain. The qualified version expressions expose only their corresponding explicit declaration and do not inherit. Blank versions count as absent. YAML strings and numbers normalize to strings; `config.version` and artifact contents never supply a content version.
 
 ## Coordinates and explicit overrides
 
@@ -184,6 +192,7 @@ domains:
             artifactId: orders-openapi
             type: openapi
             path: contracts/orders.openapi.yaml
+            version: 1.1.0
 ```
 
 `${groupId}` and `${artifactId}` can be selected by any artifact provider expression, not only Maven.
@@ -203,6 +212,50 @@ Supported absolute URIs bypass the list. Exhausted reads report redacted candida
 | `maven` | Yes | No |
 
 See [the detailed source guide](docs/source-resolution-guide.md) for provider defaults, custom Git recipes, encoding, workspace traversal, Artifactory layouts, and Maven Central JAR extraction.
+
+## Loading API
+
+`ZenWaveManifestLoader` is the canonical multiplatform API. Its loading operations are
+`suspend` functions so JVM and Node.js/Kotlin callers can perform manifest, document, and
+artifact I/O without blocking their server event loop:
+
+```kotlin
+val loader = ZenWaveManifestLoader()
+val manifest = loader.load("file:///workspace/zenwave-architecture.yml") // http also work
+val service = manifest.findService("commerce/orders")!!
+val openApis = service.findArtifacts("openapi")
+val text = loader.loadArtifactText(manifest, service, openApis.first())
+val schema = loader.resolveArtifactReference(
+    manifest,
+    service,
+    openApis.first(),
+    "schemas/order.yaml",
+)
+```
+
+Java and synchronous JVM integrations can use `BlockingZenWaveManifestLoader`. It exposes the
+same I/O operations without coroutine continuations and accepts either `String` or `java.net.URI`
+for root resources:
+
+```java
+var loader = new BlockingZenWaveManifestLoader();
+var manifest = loader.load(URI.create("file:///workspace/zenwave-architecture.yml"));
+var service = manifest.findService("commerce/orders");
+var artifact = service.findArtifact("openapi");
+var options = new ManifestLoadOptions()
+        .withPreferredSource("workspace")
+        .withFallback(true);
+var text = loader.loadArtifactText(manifest, service, artifact, options);
+```
+
+For batch service documents, `loadServiceDocResults` preserves one result per configured
+document, including its resolved resource or error message. `loadAvailableServiceDocs` is the
+convenience variant for generators that only need successfully loaded content.
+`loadServiceDocs` remains the fail-fast variant.
+
+Candidate and reference construction remains non-blocking on the common loader. Use
+`ManifestResolvedResource.referenceUri()` when a consumer needs a single URI-like reference,
+including a resource stored inside an archive.
 
 ## Kotlin module and verification
 

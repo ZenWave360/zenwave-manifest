@@ -107,11 +107,20 @@ data class ManifestService(
     val consumers: List<String> = emptyList(),
     val repository: String? = null,
 ) {
-    fun resolvedVersion(artifact: ManifestArtifact? = null): String? =
-        artifact?.version.nonBlankOrNull()
-            ?: version.nonBlankOrNull()
+    /**
+     * Effective `${version}` for a service document: the closest explicit declaration in the
+     * service, subdomain, domain chain. Artifacts never take part in this inheritance.
+     */
+    fun documentVersion(): String? =
+        version.nonBlankOrNull()
             ?: subdomainVersion.nonBlankOrNull()
             ?: domainVersion.nonBlankOrNull()
+
+    fun findArtifact(type: String): ManifestArtifact? =
+        artifacts.firstOrNull { it.type == type }
+
+    fun findArtifacts(type: String): List<ManifestArtifact> =
+        artifacts.filter { it.type == type }
 }
 
 data class ManifestArtifact(
@@ -121,6 +130,14 @@ data class ManifestArtifact(
     val path: String,
     val version: String? = null,
 ) {
+    /**
+     * Effective `${version}` for this artifact: its own declared version, with no inheritance from
+     * the owning service, subdomain, or domain. `version` is a required artifact field, so a valid
+     * manifest always resolves it.
+     */
+    val resolvedVersion: String?
+        get() = version.nonBlankOrNull()
+
     val fileName: String
         get() = path.substringAfterLast('/').substringAfterLast('\\')
 
@@ -149,6 +166,10 @@ data class ManifestResolutionContext(
     val docs: Map<String, String>,
     val groupId: String? = null,
     val artifactId: String? = null,
+    /**
+     * Effective `${version}` for the operation being resolved: [ManifestArtifact.resolvedVersion]
+     * for an artifact load and [ManifestService.documentVersion] for a service-document load.
+     */
     val version: String? = null,
     val repository: String? = null,
 ) {
@@ -166,7 +187,7 @@ data class ManifestResolutionContext(
             put("artifact.fileName", it.fileName)
             put("artifact.fileNameWithoutExtension", it.fileNameWithoutExtension)
             it.name.nonBlankOrNull()?.let { name -> put("artifact.name", name) }
-            it.version.nonBlankOrNull()?.let { version -> put("artifact.version", version) }
+            it.resolvedVersion?.let { version -> put("artifact.version", version) }
         }
         docs.forEach { (key, value) -> put("service.docs[$key]", value) }
         groupId.nonBlankOrNull()?.let { put("groupId", it) }
@@ -175,16 +196,52 @@ data class ManifestResolutionContext(
     }
 }
 
-data class ManifestLoadOptions(
+data class ManifestLoadOptions @kotlin.jvm.JvmOverloads constructor(
     val preferredSource: String? = null,
     val allowFallback: Boolean = true,
-)
+) {
+    fun withPreferredSource(source: String?): ManifestLoadOptions =
+        copy(preferredSource = source.nonBlankOrNull())
+
+    fun withFallback(allow: Boolean): ManifestLoadOptions =
+        copy(allowFallback = allow)
+}
 
 data class ManifestResolvedResource(
     val source: String,
     val uri: String,
     val archiveEntry: String? = null,
-)
+) {
+    fun resolveReference(reference: String): ManifestResolvedResource {
+        if (reference.isBlank()) return this
+        if (archiveEntry != null && !ManifestReferenceResolver.hasScheme(reference)) {
+            return copy(archiveEntry = ManifestReferenceResolver.resolvePathReference(archiveEntry, reference))
+        }
+        return copy(
+            uri = ManifestReferenceResolver.resolveReference(uri, reference),
+            archiveEntry = null,
+        )
+    }
+
+    fun referenceUri(): String =
+        archiveEntry?.let { "$uri!/${it.trimStart('/')}" } ?: uri
+}
+
+/**
+ * Non-throwing result for batch resource loading.
+ *
+ * Tooling can retain successfully loaded content while presenting [errorMessage] for an
+ * individual document that could not be resolved or read.
+ */
+data class ManifestResourceLoadResult(
+    val path: String,
+    val resource: ManifestResolvedResource? = null,
+    val content: String? = null,
+    val errorMessage: String? = null,
+) {
+    val successful: Boolean
+        get() = content != null
+}
 
 fun interface ManifestArchiveEntryLoader {
     suspend fun loadEntry(uri: String, entryPath: String): String
