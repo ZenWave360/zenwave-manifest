@@ -9,7 +9,7 @@ ZenWave Manifest 1.0 is read-only. A conforming implementation resolves content 
 
 Domain, subdomain, and service `id` fields are optional non-blank strings. The resolved ID is the explicit value or the node's YAML map key. A service directly below a domain has `subdomain.id = ""` in path-expression contexts.
 
-A service `repository` field is an optional non-blank string naming its source repository. It is distinct from the stable architecture `id`, is explicit-only, and MUST NOT default to or be derived from `service.id`.
+A service or domain may declare artifacts and an optional non-blank `repository`. Repository is distinct from stable architecture `id`, is explicit-only, and MUST NOT default to or be derived from owner identity.
 
 Artifact `name` is optional and explicit-only. It is never derived from the artifact path. Service `docs` is a map whose non-blank keys use letters, numbers, `.`, `_`, and `-`; values are non-blank paths or supported absolute URIs.
 
@@ -28,6 +28,8 @@ ${domain.id}
 ${subdomain.id}
 ${service.id}
 ${service.repository}
+${owner.id}
+${owner.repository}
 ${domain.version}
 ${subdomain.version}
 ${service.version}
@@ -43,7 +45,7 @@ ${artifactId}
 ${version}
 ```
 
-`service.repository` exists only for an explicitly declared service repository. A selected expression using it when absent MUST fail as an unresolved runtime variable; implementations MUST NOT substitute `service.id`. `artifact.name` exists only for an explicitly named artifact. `artifact.fileName` is the final path segment. `artifact.fileNameWithoutExtension` removes only the final extension; dotfiles and extensionless filenames are unchanged. `${version}` is the effective version of the operation: `artifact.version` for an artifact load and the inherited service, subdomain, or domain version for a document load. Each qualified version expression exposes only the explicit version on its named node and is unresolved when that declaration is absent.
+`owner.id` and `owner.repository` refer to the service or domain declaring the artifact. `owner.repository` and `service.repository` exist only when explicitly declared. A selected missing repository MUST fail as unresolved; implementations MUST NOT infer it from an ID. `artifact.name` exists only for an explicitly named artifact. `artifact.fileName` is the final path segment. `artifact.fileNameWithoutExtension` removes only the final extension; dotfiles and extensionless filenames are unchanged. `${version}` is the effective version of the operation: `artifact.version` for an artifact load and the inherited service, subdomain, or domain version for a document load. Each qualified version expression exposes only the explicit version on its named node and is unresolved when that declaration is absent.
 
 Bracket contents in `service.docs[key]` are literal. A missing key is unresolved before I/O; `${service.docs}` is invalid. `content.path` is the artifact path for an artifact load and the selected docs-map value for a document load. Loading all docs evaluates expressions separately for every entry.
 
@@ -56,14 +58,14 @@ Provider encoding occurs after value selection. Git and generic Artifactory pres
 Config defaults are:
 
 ```yaml
-groupIdExpression: "${service.id}"
+groupIdExpression: "${owner.id}"
 artifactIdExpression: "${artifact.fileNameWithoutExtension}"
 ```
 
 Coordinates resolve with this precedence:
 
 ```text
-groupId    = service.groupId, otherwise config.groupIdExpression
+groupId    = owner.groupId, otherwise config.groupIdExpression
 artifactId = artifact.artifactId, otherwise config.artifactIdExpression
 ```
 

@@ -12,12 +12,24 @@ data class ZenWaveManifest(
 
     fun findService(reference: String): ManifestService? =
         servicesByRef[reference] ?: servicesById[reference]
+
+    val artifactOwners: List<ManifestArtifactOwner>
+        get() = domains + services
+}
+
+sealed interface ManifestArtifactOwner {
+    val id: String
+    val repository: String?
+    val groupId: String?
+    val version: String?
+    val artifacts: List<ManifestArtifact>
+    val artifactOwnerRef: String
 }
 
 data class ManifestConfig(
     val title: String? = null,
     val version: String? = null,
-    val groupIdExpression: String = "\${service.id}",
+    val groupIdExpression: String = "\${owner.id}",
     val artifactIdExpression: String = "\${artifact.fileNameWithoutExtension}",
     val properties: Map<String, String> = emptyMap(),
     val contentResolution: List<String> = listOf(ManifestSourceName.WORKSPACE),
@@ -71,13 +83,24 @@ data class ManifestMavenSource(
 
 data class ManifestDomain(
     val key: String,
-    val id: String,
-    val version: String? = null,
+    override val id: String,
+    override val version: String? = null,
     val name: String? = null,
     val description: String? = null,
     val services: List<ManifestService> = emptyList(),
     val subdomains: List<ManifestSubdomain> = emptyList(),
-)
+    override val repository: String? = null,
+    override val groupId: String? = null,
+    override val artifacts: List<ManifestArtifact> = emptyList(),
+    val docs: Map<String, String> = emptyMap(),
+) : ManifestArtifactOwner {
+    override val artifactOwnerRef: String
+        get() = key
+
+    fun findArtifact(type: String): ManifestArtifact? = artifacts.firstOrNull { it.type == type }
+
+    fun findArtifacts(type: String): List<ManifestArtifact> = artifacts.filter { it.type == type }
+}
 
 data class ManifestSubdomain(
     val key: String,
@@ -94,19 +117,22 @@ data class ManifestService(
     val subdomainKey: String?,
     val subdomainId: String,
     val serviceKey: String,
-    val id: String,
-    val groupId: String? = null,
-    val version: String? = null,
+    override val id: String,
+    override val groupId: String? = null,
+    override val version: String? = null,
     val domainVersion: String? = null,
     val subdomainVersion: String? = null,
     val name: String? = null,
     val description: String? = null,
     val serviceRef: String,
     val docs: Map<String, String> = emptyMap(),
-    val artifacts: List<ManifestArtifact> = emptyList(),
+    override val artifacts: List<ManifestArtifact> = emptyList(),
     val consumers: List<String> = emptyList(),
-    val repository: String? = null,
-) {
+    override val repository: String? = null,
+) : ManifestArtifactOwner {
+    override val artifactOwnerRef: String
+        get() = serviceRef
+
     /**
      * Effective `${version}` for a service document: the closest explicit declaration in the
      * service, subdomain, domain chain. Artifacts never take part in this inheritance.
@@ -172,12 +198,16 @@ data class ManifestResolutionContext(
      */
     val version: String? = null,
     val repository: String? = null,
+    val ownerId: String = serviceId,
+    val ownerRepository: String? = repository,
 ) {
     fun variables(): Map<String, String> = buildMap {
         put("domain.id", domainId)
         put("subdomain.id", subdomainId)
         put("service.id", serviceId)
         repository.nonBlankOrNull()?.let { put("service.repository", it) }
+        put("owner.id", ownerId)
+        ownerRepository.nonBlankOrNull()?.let { put("owner.repository", it) }
         domainVersion.nonBlankOrNull()?.let { put("domain.version", it) }
         subdomainVersion.nonBlankOrNull()?.let { put("subdomain.version", it) }
         serviceVersion.nonBlankOrNull()?.let { put("service.version", it) }

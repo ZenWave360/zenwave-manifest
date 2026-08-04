@@ -37,7 +37,7 @@ class ZenWaveManifestLoader(
             ?.mapNotNull { it?.toString() }
             ?: listOf(ManifestSourceName.WORKSPACE)
         val groupIdExpression = expandStatic(
-            configNode["groupIdExpression"]?.toString() ?: "\${service.id}",
+            configNode["groupIdExpression"]?.toString() ?: "\${owner.id}",
             "config.groupIdExpression",
             properties,
             diagnostics,
@@ -174,9 +174,15 @@ class ZenWaveManifestLoader(
         manifest: ZenWaveManifest,
         service: ManifestService,
         artifact: ManifestArtifact,
+    ): ManifestResolutionContext = artifactResolutionContext(manifest, service as ManifestArtifactOwner, artifact)
+
+    fun artifactResolutionContext(
+        manifest: ZenWaveManifest,
+        owner: ManifestArtifactOwner,
+        artifact: ManifestArtifact,
     ): ManifestResolutionContext {
-        val base = baseContext(service, artifact, artifact.path)
-        val coordinates = resolveCoordinates(manifest, base, service, artifact)
+        val base = baseContext(owner, artifact, artifact.path)
+        val coordinates = resolveCoordinates(manifest, base, owner, artifact)
         return base.copy(groupId = coordinates.groupId, artifactId = coordinates.artifactId)
     }
 
@@ -483,11 +489,11 @@ class ZenWaveManifestLoader(
     private fun resolveCoordinates(
         manifest: ZenWaveManifest,
         context: ManifestResolutionContext,
-        service: ManifestService,
+        owner: ManifestArtifactOwner,
         artifact: ManifestArtifact,
     ): ManifestCoordinates {
         return ManifestCoordinates(
-            resolveGroupId(manifest, service, context),
+            resolveGroupId(manifest, owner, context),
             resolveArtifactId(manifest, artifact, context),
         )
     }
@@ -514,12 +520,31 @@ class ZenWaveManifestLoader(
 
     private fun resolveGroupId(
         manifest: ZenWaveManifest,
-        service: ManifestService,
+        owner: ManifestArtifactOwner,
         context: ManifestResolutionContext,
     ): String = (
-        service.groupId.nonBlankOrNull()
+        owner.groupId.nonBlankOrNull()
             ?: interpolateRuntime("coordinates", manifest.config.groupIdExpression, context, encode = false)
         ).requireCoordinate("groupId")
+
+    private fun baseContext(owner: ManifestArtifactOwner, artifact: ManifestArtifact?, contentPath: String): ManifestResolutionContext =
+        when (owner) {
+            is ManifestService -> baseContext(owner, artifact, contentPath)
+            is ManifestDomain -> ManifestResolutionContext(
+                domainId = owner.id,
+                subdomainId = "",
+                serviceId = "",
+                domainVersion = owner.version,
+                subdomainVersion = null,
+                serviceVersion = null,
+                artifact = artifact,
+                contentPath = contentPath,
+                docs = emptyMap(),
+                version = artifact?.resolvedVersion ?: owner.version,
+                ownerId = owner.id,
+                ownerRepository = owner.repository,
+            )
+        }
 
     private fun resolveArtifactId(
         manifest: ZenWaveManifest,
@@ -546,6 +571,8 @@ class ZenWaveManifestLoader(
             contentPath = contentPath,
             docs = service.docs,
             version = if (artifact == null) service.documentVersion() else artifact.resolvedVersion,
+            ownerId = service.id,
+            ownerRepository = service.repository,
         )
 
     private fun String?.requireCoordinate(name: String): String =
@@ -610,6 +637,8 @@ class ZenWaveManifestLoader(
     ): ManifestDomain {
         val domainId = value["id"]?.toString().nonBlankOrNull() ?: domainKey
         val domainVersion = value["version"].stringValue()
+        val docs = parseDocs(properties, diagnostics, domainKey, value)
+        val artifacts = parseArtifacts(properties, diagnostics, domainKey, value)
         val directServices = value.mapAt("services").map { (serviceKey, serviceValue) ->
             parseService(
                 properties, diagnostics, domainKey, domainId, domainVersion,
@@ -623,13 +652,17 @@ class ZenWaveManifestLoader(
             )
         }
         return ManifestDomain(
-            domainKey,
-            domainId,
-            domainVersion,
-            value["name"]?.toString(),
-            value["description"]?.toString(),
-            directServices,
-            subdomains,
+            key = domainKey,
+            id = domainId,
+            version = domainVersion,
+            name = value["name"]?.toString(),
+            description = value["description"]?.toString(),
+            services = directServices,
+            subdomains = subdomains,
+            repository = (value["repository"] as? String).nonBlankOrNull(),
+            groupId = (value["groupId"] as? String).nonBlankOrNull(),
+            artifacts = artifacts,
+            docs = docs,
         )
     }
 
@@ -675,25 +708,8 @@ class ZenWaveManifestLoader(
     ): ManifestService {
         val serviceRef = listOfNotNull(domainKey, subdomainKey, serviceKey).joinToString("/")
         val serviceId = value["id"]?.toString().nonBlankOrNull() ?: serviceKey
-        val docs = value.mapAt("docs").mapValuesNotNull { raw ->
-            (raw as? String)?.let {
-                expandStatic(it, "$serviceRef.docs", properties, diagnostics, allowRuntime = false)
-            }
-        }
-        val artifacts = value.listAt("artifacts").mapIndexedNotNull { index, rawArtifact ->
-            val artifact = rawArtifact.asMap()
-            val type = artifact["type"] as? String ?: return@mapIndexedNotNull null
-            val rawPath = artifact["path"] as? String ?: return@mapIndexedNotNull null
-            val version = artifact["version"].stringValue()
-            if (version == null) diagnostics += missingArtifactField(serviceRef, index, "version")
-            ManifestArtifact(
-                name = (artifact["name"] as? String).nonBlankOrNull(),
-                artifactId = (artifact["artifactId"] as? String).nonBlankOrNull(),
-                type = type,
-                path = expandStatic(rawPath, "$serviceRef.artifacts.path", properties, diagnostics, allowRuntime = false),
-                version = version,
-            )
-        }
+        val docs = parseDocs(properties, diagnostics, serviceRef, value)
+        val artifacts = parseArtifacts(properties, diagnostics, serviceRef, value)
         return ManifestService(
             domainKey = domainKey,
             domainId = domainId,
@@ -712,6 +728,37 @@ class ZenWaveManifestLoader(
             docs = docs,
             artifacts = artifacts,
             consumers = value.listAt("consumers").mapNotNull { normalizeConsumer(domainKey, it) },
+        )
+    }
+
+    private fun parseDocs(
+        properties: Map<String, String>,
+        diagnostics: MutableList<ManifestDiagnostic>,
+        ownerRef: String,
+        value: Map<String, Any?>,
+    ): Map<String, String> = value.mapAt("docs").mapValuesNotNull { raw ->
+        (raw as? String)?.let {
+            expandStatic(it, "$ownerRef.docs", properties, diagnostics, allowRuntime = false)
+        }
+    }
+
+    private fun parseArtifacts(
+        properties: Map<String, String>,
+        diagnostics: MutableList<ManifestDiagnostic>,
+        ownerRef: String,
+        value: Map<String, Any?>,
+    ): List<ManifestArtifact> = value.listAt("artifacts").mapIndexedNotNull { index, rawArtifact ->
+        val artifact = rawArtifact.asMap()
+        val type = artifact["type"] as? String ?: return@mapIndexedNotNull null
+        val rawPath = artifact["path"] as? String ?: return@mapIndexedNotNull null
+        val version = artifact["version"].stringValue()
+        if (version == null) diagnostics += missingArtifactField(ownerRef, index, "version")
+        ManifestArtifact(
+            name = (artifact["name"] as? String).nonBlankOrNull(),
+            artifactId = (artifact["artifactId"] as? String).nonBlankOrNull(),
+            type = type,
+            path = expandStatic(rawPath, "$ownerRef.artifacts.path", properties, diagnostics, allowRuntime = false),
+            version = version,
         )
     }
 
@@ -985,7 +1032,8 @@ class ZenWaveManifestLoader(
         val PLACEHOLDER = Regex("""[${'$'}][{]([^}]*)[}]""")
         val DOC_LOOKUP = Regex("""service[.]docs\x5B[A-Za-z0-9._-]+\x5D""")
         val CANONICAL_RUNTIME_VARIABLES = setOf(
-            "domain.id", "subdomain.id", "service.id", "service.repository", "domain.version", "subdomain.version",
+            "domain.id", "subdomain.id", "service.id", "service.repository", "owner.id", "owner.repository",
+            "domain.version", "subdomain.version",
             "service.version", "artifact.version", "artifact.path", "artifact.name",
             "artifact.fileName", "artifact.fileNameWithoutExtension", "content.path",
             "groupId", "artifactId", "version",
