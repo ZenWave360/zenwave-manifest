@@ -8,6 +8,35 @@ import kotlin.test.assertNotNull
 class ManifestPublicApiTest {
 
     @Test
+    fun domainArtifactsUseTheSameDefaultCoordinateApiAsServiceArtifacts() = runTest {
+        val loader = ZenWaveManifestLoader()
+        val manifest = loader.parse(
+            "https://example.com/zenwave-architecture.yml",
+            """
+            config:
+              groupIdExpression: com.example.${'$'}{owner.id}
+            domains:
+              architecture:
+                repository: architecture-repository
+                artifacts:
+                  - type: zfl
+                    path: business-flows/place-order-flow.zfl
+                    version: 1.2.3
+            """.trimIndent(),
+        )
+
+        val owner = manifest.domains.single()
+        val artifact = owner.artifacts.single()
+        val variables = loader.artifactResolutionContext(manifest, owner, artifact).variables()
+
+        assertEquals(listOf(owner) + manifest.services, manifest.artifactOwners)
+        assertEquals("architecture", variables["owner.id"])
+        assertEquals("architecture-repository", variables["owner.repository"])
+        assertEquals("com.example.architecture", variables["groupId"])
+        assertEquals("place-order-flow", variables["artifactId"])
+    }
+
+    @Test
     fun queriesArtifactsAndBuildsReferencesWithoutPluginAdapters() = runTest {
         val manifest = ZenWaveManifestLoader().parse(
             "file:///workspace/architecture/zenwave-architecture.yml",

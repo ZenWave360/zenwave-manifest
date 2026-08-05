@@ -87,7 +87,7 @@ class ManifestParserTest {
             """,
         )
 
-        assertEquals("${'$'}{service.id}", manifest.config.groupIdExpression)
+        assertEquals("${'$'}{owner.id}", manifest.config.groupIdExpression)
         assertEquals("${'$'}{artifact.fileNameWithoutExtension}", manifest.config.artifactIdExpression)
         assertEquals("${'$'}{domain.id}/${'$'}{subdomain.id}/${'$'}{service.id}", manifest.config.sources.workspace.basePathExpression)
         assertEquals("https://github.com", manifest.config.sources.git!!.server)

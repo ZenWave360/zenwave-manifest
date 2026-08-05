@@ -103,6 +103,8 @@ Static `config.properties` substitution runs first. It cannot override canonical
 
 | Variable | Value |
 | --- | --- |
+| `${owner.id}` | Resolved ID of the service or domain that declares the artifact. |
+| `${owner.repository}` | Explicit repository of the service or domain artifact owner; unresolved when omitted. |
 | `${domain.id}` | Explicit domain ID, otherwise its map key. |
 | `${subdomain.id}` | Explicit subdomain ID, otherwise its map key; empty for direct services. |
 | `${service.id}` | Explicit service ID, otherwise its map key. |
@@ -121,7 +123,7 @@ Static `config.properties` substitution runs first. It cannot override canonical
 | `${artifactId}` | Common resolved artifact coordinate. |
 | `${version}` | Effective content version: `artifact.version` for an artifact, the inherited service, subdomain, or domain version for a service document. |
 
-Service architecture identity and source-control location are deliberately separate. Repository identity is never inferred from `service.id`:
+Services and domains may own artifacts. Owner identity and source-control location are deliberately separate; repository identity is never inferred from `owner.id`:
 
 ```yaml
 config:
@@ -175,11 +177,11 @@ ${service.docs[readme]}  = docs/README.md
 Common coordinates resolve as:
 
 ```text
-groupId    = service.groupId, otherwise config.groupIdExpression
+groupId    = owner.groupId, otherwise config.groupIdExpression
 artifactId = artifact.artifactId, otherwise config.artifactIdExpression
 ```
 
-Defaults are `${service.id}` and `${artifact.fileNameWithoutExtension}`. Coordinate expressions cannot recursively reference `${groupId}` or `${artifactId}`. Overrides are valid:
+Defaults are `${owner.id}` and `${artifact.fileNameWithoutExtension}`. Coordinate expressions cannot recursively reference `${groupId}` or `${artifactId}`. Overrides are valid:
 
 ```yaml
 domains:

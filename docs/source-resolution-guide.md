@@ -10,6 +10,8 @@ Hierarchy IDs resolve from an explicit non-blank `id` or the node's YAML map key
 
 | Runtime expression | Resolution |
 | --- | --- |
+| `${owner.id}` | Resolved ID of the service or domain declaring the artifact. |
+| `${owner.repository}` | Explicit repository of the service or domain declaring the artifact. |
 | `${domain.id}` | Resolved owning domain ID. |
 | `${subdomain.id}` | Resolved owning subdomain ID, or empty for a direct service. |
 | `${service.id}` | Resolved owning service ID. |
@@ -75,14 +77,14 @@ Empty slash-separated hierarchy segments are removed without rewriting non-empty
 
 ```yaml
 config:
-  groupIdExpression: "${service.id}"
+  groupIdExpression: "${owner.id}"
   artifactIdExpression: "${artifact.fileNameWithoutExtension}"
 ```
 
 These are the defaults. Resolution precedence is:
 
 ```text
-groupId    = service.groupId, otherwise config.groupIdExpression
+groupId    = owner.groupId, otherwise config.groupIdExpression
 artifactId = artifact.artifactId, otherwise config.artifactIdExpression
 ```
 
