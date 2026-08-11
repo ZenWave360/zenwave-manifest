@@ -1,6 +1,7 @@
 package io.zenwave360.manifest;
 
 import java.net.URI;
+import java.util.List;
 
 /**
  * Compile-time Java API contract. Runtime behavior is covered by the Kotlin tests.
@@ -33,8 +34,21 @@ class BlockingZenWaveManifestLoaderJavaTest {
         var reference = loader.getDelegate()
                 .resolveArtifactReference(manifest, service, artifact, null, defaults)
                 .referenceUri();
+        var catalog = ManifestArtifactCatalog.resolve(manifest, loader.getDelegate());
+        var owner = new ManifestOwnerSelector.OwnerRef("commerce/orders");
+        var openApis = catalog.resolveByType(owner, "openapi");
+        var orders = catalog.resolveByArtifactId(owner, "orders");
+        var selector = ManifestArtifactSelector.typeInRepository(
+                "orders-repository",
+                ManifestArtifactSelector.ASYNCAPI_ALL
+        );
+        var versionUpdate = new ManifestArtifactVersionUpdate(selector, "2.0.0");
+        var editor = new BlockingZenWaveManifestEditor();
+        List<ManifestArtifactVersionUpdate> updates = List.of(versionUpdate);
 
-        if (artifacts.isEmpty() || docResults.isEmpty() || availableDocs == null || reference.isBlank()) {
+        if (artifacts.isEmpty() || docResults.isEmpty() || availableDocs == null || reference.isBlank()
+                || catalog.getArtifacts().isEmpty() || openApis.getArtifacts().isEmpty()
+                || orders.getArtifact() == null || editor.getDelegate() == null || updates.isEmpty()) {
             throw new AssertionError("Unreachable compile-time API contract");
         }
     }

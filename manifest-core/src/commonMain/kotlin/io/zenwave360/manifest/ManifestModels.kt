@@ -30,7 +30,7 @@ data class ManifestConfig(
     val title: String? = null,
     val version: String? = null,
     val groupIdExpression: String = "\${owner.id}",
-    val artifactIdExpression: String = "\${artifact.fileNameWithoutExtension}",
+    val artifactIdExpression: String = "\${artifact.pathWithoutExtension}",
     val properties: Map<String, String> = emptyMap(),
     val contentResolution: List<String> = listOf(ManifestSourceName.WORKSPACE),
     val sources: ManifestSources = ManifestSources(),
@@ -167,6 +167,13 @@ data class ManifestArtifact(
     val fileName: String
         get() = path.substringAfterLast('/').substringAfterLast('\\')
 
+    val pathWithoutExtension: String
+        get() {
+            val extensionIndex = path.lastIndexOf('.')
+            val separatorIndex = maxOf(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+            return if (extensionIndex <= separatorIndex + 1) path else path.substring(0, extensionIndex)
+        }
+
     val fileNameWithoutExtension: String
         get() {
             val file = fileName
@@ -214,6 +221,7 @@ data class ManifestResolutionContext(
         put("content.path", contentPath)
         artifact?.let {
             put("artifact.path", it.path)
+            put("artifact.pathWithoutExtension", it.pathWithoutExtension)
             put("artifact.fileName", it.fileName)
             put("artifact.fileNameWithoutExtension", it.fileNameWithoutExtension)
             it.name.nonBlankOrNull()?.let { name -> put("artifact.name", name) }

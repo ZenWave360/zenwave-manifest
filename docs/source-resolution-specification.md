@@ -35,6 +35,7 @@ ${subdomain.version}
 ${service.version}
 ${artifact.version}
 ${artifact.path}
+${artifact.pathWithoutExtension}
 ${artifact.name}
 ${artifact.fileName}
 ${artifact.fileNameWithoutExtension}
@@ -45,7 +46,7 @@ ${artifactId}
 ${version}
 ```
 
-`owner.id` and `owner.repository` refer to the service or domain declaring the artifact. `owner.repository` and `service.repository` exist only when explicitly declared. A selected missing repository MUST fail as unresolved; implementations MUST NOT infer it from an ID. `artifact.name` exists only for an explicitly named artifact. `artifact.fileName` is the final path segment. `artifact.fileNameWithoutExtension` removes only the final extension; dotfiles and extensionless filenames are unchanged. `${version}` is the effective version of the operation: `artifact.version` for an artifact load and the inherited service, subdomain, or domain version for a document load. Each qualified version expression exposes only the explicit version on its named node and is unresolved when that declaration is absent.
+`owner.id` and `owner.repository` refer to the service or domain declaring the artifact. `owner.repository` and `service.repository` exist only when explicitly declared. A selected missing repository MUST fail as unresolved; implementations MUST NOT infer it from an ID. `artifact.name` exists only for an explicitly named artifact. `artifact.pathWithoutExtension` removes only the final extension from the complete path. `artifact.fileName` is the final path segment. `artifact.fileNameWithoutExtension` removes only the final extension from that segment; dotfiles and extensionless values are unchanged. `${version}` is the effective version of the operation: `artifact.version` for an artifact load and the inherited service, subdomain, or domain version for a document load. Each qualified version expression exposes only the explicit version on its named node and is unresolved when that declaration is absent.
 
 Bracket contents in `service.docs[key]` are literal. A missing key is unresolved before I/O; `${service.docs}` is invalid. `content.path` is the artifact path for an artifact load and the selected docs-map value for a document load. Loading all docs evaluates expressions separately for every entry.
 
@@ -59,7 +60,7 @@ Config defaults are:
 
 ```yaml
 groupIdExpression: "${owner.id}"
-artifactIdExpression: "${artifact.fileNameWithoutExtension}"
+artifactIdExpression: "${artifact.pathWithoutExtension}"
 ```
 
 Coordinates resolve with this precedence:

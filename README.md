@@ -6,7 +6,7 @@
 [![branch coverage](https://raw.githubusercontent.com/ZenWave360/zenwave-manifest/badges/branches.svg)](https://github.com/ZenWave360/zenwave-manifest/actions/workflows/main.yml)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/ZenWave360/zenwave-manifest/blob/main/LICENSE)
 
-ZenWave Manifest is the read-only architecture contract shared by ZenWave tools. A hand-authored `zenwave-architecture.yml` describes domains, services, documentation, and artifacts; the Kotlin Multiplatform library resolves that content deterministically from workspace, Git, Apicurio Registry, generic Artifactory, or Maven sources.
+ZenWave Manifest is the architecture contract shared by ZenWave tools. A hand-authored `zenwave-architecture.yml` describes domains, services, documentation, and artifacts; the Kotlin Multiplatform library resolves that content deterministically from workspace, Git, Apicurio Registry, generic Artifactory, or Maven sources. Its source-aware editor can update existing scalar values without reserializing the surrounding YAML.
 
 
 - Versioned schema: `https://schemas.zenwave360.io/zenwave-architecture/1.0/schema.json`
@@ -91,7 +91,7 @@ The same artifact has these remote candidates:
 https://gitlab.com/commerce/orders-api/-/raw/v1.1.0/contracts/orders.openapi.yaml
 https://registry.example.com/apis/registry/v3/groups/orders-api/artifacts/contracts%2Forders.openapi.yaml/versions/1.1.0/content
 https://artifacts.example.com/artifactory/contracts/commerce/orders-api/1.1.0/contracts/orders.openapi.yaml
-https://artifacts.example.com/artifactory/maven-releases/io/arcadia/orders-api/orders.openapi/1.1.0/orders.openapi-1.1.0.jar!/contracts/orders.openapi.yaml
+https://artifacts.example.com/artifactory/maven-releases/io/arcadia/orders-api/contracts%2Forders.openapi/1.1.0/contracts%2Forders.openapi-1.1.0.jar!/contracts/orders.openapi.yaml
 ```
 
 The empty direct-service subdomain segment is removed without damaging `https://`.
@@ -114,6 +114,7 @@ Static `config.properties` substitution runs first. It cannot override canonical
 | `${service.version}` | Explicit service version, when declared. |
 | `${artifact.version}` | Declared artifact version; artifact `version` is required. |
 | `${artifact.path}` | Complete declared artifact path. |
+| `${artifact.pathWithoutExtension}` | Complete artifact path with only its final extension removed. |
 | `${artifact.name}` | Explicit non-blank artifact name only; unresolved when omitted. |
 | `${artifact.fileName}` | Final artifact path segment, with every extension. |
 | `${artifact.fileNameWithoutExtension}` | Filename with only its final extension removed. |
@@ -152,13 +153,13 @@ If `repository` is omitted, `${service.repository}` stays unresolved and any sel
 
 Filename behavior is exact:
 
-| Path | `artifact.fileName` | `artifact.fileNameWithoutExtension` |
-| --- | --- | --- |
-| `contracts/orders.openapi.yaml` | `orders.openapi.yaml` | `orders.openapi` |
-| `archive.tar.gz` | `archive.tar.gz` | `archive.tar` |
-| `domain-model.zdl` | `domain-model.zdl` | `domain-model` |
-| `.gitignore` | `.gitignore` | `.gitignore` |
-| `README` | `README` | `README` |
+| Path | `artifact.pathWithoutExtension` | `artifact.fileName` | `artifact.fileNameWithoutExtension` |
+| --- | --- | --- | --- |
+| `contracts/orders.openapi.yaml` | `contracts/orders.openapi` | `orders.openapi.yaml` | `orders.openapi` |
+| `archive.tar.gz` | `archive.tar` | `archive.tar.gz` | `archive.tar` |
+| `domain-model.zdl` | `domain-model` | `domain-model.zdl` | `domain-model` |
+| `.gitignore` | `.gitignore` | `.gitignore` | `.gitignore` |
+| `README` | `README` | `README` | `README` |
 
 Documents are selected from the service map. Keys may contain letters, numbers, `.`, `_`, and `-`:
 
@@ -181,7 +182,7 @@ groupId    = owner.groupId, otherwise config.groupIdExpression
 artifactId = artifact.artifactId, otherwise config.artifactIdExpression
 ```
 
-Defaults are `${owner.id}` and `${artifact.fileNameWithoutExtension}`. Coordinate expressions cannot recursively reference `${groupId}` or `${artifactId}`. Overrides are valid:
+Defaults are `${owner.id}` and `${artifact.pathWithoutExtension}`. Coordinate expressions cannot recursively reference `${groupId}` or `${artifactId}`. Overrides are valid:
 
 ```yaml
 domains:
@@ -198,6 +199,68 @@ domains:
 ```
 
 `${groupId}` and `${artifactId}` can be selected by any artifact provider expression, not only Maven.
+
+## Artifact catalog and selections
+
+`ManifestArtifactCatalog` resolves every declared artifact together with its owner and effective
+coordinates. Declared artifact `type` values remain an open string namespace: `openapi`,
+`asyncapi`, `zdl`, `zfl`, `grpc`, and future types require no registration with the library.
+Callers can resolve either a unique effective artifact ID or every artifact of a declared type on
+one owner:
+
+```kotlin
+val owner = ManifestOwnerSelector.Repository("orders-api")
+val openApis = catalog.resolveByType(owner, "openapi").artifacts
+val contract = catalog.resolveByArtifactId(owner, "contracts/orders").artifact
+```
+
+Type resolution also supports library-defined virtual behavior. `asyncapi-all` selects every
+declared `asyncapi` and `asyncapi-client` artifact on exactly one service and returns the concrete
+members; it is never inserted into `ZenWaveManifest.artifacts`.
+
+```kotlin
+val catalog = ManifestArtifactCatalog.resolve(manifest, loader)
+val selection = catalog.resolve(
+    ManifestArtifactSelector.typeInRepository(
+        "orders-api",
+        ManifestArtifactSelector.ASYNCAPI_ALL,
+    ),
+)
+val bundleMembers: List<ResolvedManifestArtifact> = selection.artifacts
+```
+
+Repository selectors may generally span several owners. An artifact-ID selector must resolve one
+artifact. A declared type must resolve artifacts on one owner, while `asyncapi-all` must resolve one
+matching service; missing and ambiguous selections fail with `ManifestArtifactSelectionException`.
+
+## Source-aware editing
+
+`ZenWaveManifestEditor.updateArtifactVersions` accepts one or more artifact-ID or type selectors.
+It snapshots the root and referenced documents, resolves every selection, patches only the existing
+version scalar ranges, and validates the complete overlay before returning document changes.
+
+```kotlin
+val result = editor.updateArtifactVersions(
+    manifestUri,
+    listOf(
+        ManifestArtifactVersionUpdate(
+            ManifestArtifactSelector.typeInRepository(
+                "orders-api",
+                ManifestArtifactSelector.ASYNCAPI_ALL,
+            ),
+            "1.4.0",
+        ),
+    ),
+)
+```
+
+The returned `ManifestDocumentTextUpdate` values preserve unrelated formatting, comments, scalar
+quote style, and source ownership through external `$ref` documents. The editor does not persist
+them; callers can compare `originalText` before writing. JVM and Java callers can use
+`BlockingZenWaveManifestEditor` with the default file and HTTP(S) document reader.
+
+`updateScalars` is the lower-level API for updating another existing owner or artifact scalar.
+Structural edits such as adding or removing manifest nodes remain out of scope.
 
 ## Ordered reads
 

@@ -21,6 +21,7 @@ Hierarchy IDs resolve from an explicit non-blank `id` or the node's YAML map key
 | `${service.version}` | Explicit owning service version, when declared. |
 | `${artifact.version}` | Declared current artifact version; artifact `version` is a required field. |
 | `${artifact.path}` | Complete declared artifact path. |
+| `${artifact.pathWithoutExtension}` | Complete path with only its final extension removed. |
 | `${artifact.name}` | Explicit artifact `name`; absent for an unnamed artifact. |
 | `${artifact.fileName}` | Last path segment including all extensions. |
 | `${artifact.fileNameWithoutExtension}` | Last segment with only its final extension removed. |
@@ -43,7 +44,7 @@ domains:
 
 `${service.repository}` is available only for that explicit non-blank value. If the field is omitted and a selected source expression uses the variable, resolution fails with the normal unresolved-runtime-variable diagnostic rather than falling back to `service.id`.
 
-`${artifact.name}` is never inferred. For `contracts/orders.openapi.yaml`, the filename is `orders.openapi.yaml` and its filename without the final extension is `orders.openapi`. `archive.tar.gz` becomes `archive.tar`; `.gitignore` and `README` remain unchanged.
+`${artifact.name}` is never inferred. For `contracts/orders.openapi.yaml`, the path without the final extension is `contracts/orders.openapi`, the filename is `orders.openapi.yaml`, and its filename without the final extension is `orders.openapi`. `archive.tar.gz` becomes `archive.tar`; `.gitignore` and `README` remain unchanged.
 
 Document lookup keys accept letters, numbers, `.`, `_`, and `-`. Given:
 
@@ -78,7 +79,7 @@ Empty slash-separated hierarchy segments are removed without rewriting non-empty
 ```yaml
 config:
   groupIdExpression: "${owner.id}"
-  artifactIdExpression: "${artifact.fileNameWithoutExtension}"
+  artifactIdExpression: "${artifact.pathWithoutExtension}"
 ```
 
 These are the defaults. Resolution precedence is:
