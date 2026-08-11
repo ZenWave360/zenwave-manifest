@@ -33,7 +33,7 @@ class ManifestPublicApiTest {
         assertEquals("architecture", variables["owner.id"])
         assertEquals("architecture-repository", variables["owner.repository"])
         assertEquals("com.example.architecture", variables["groupId"])
-        assertEquals("place-order-flow", variables["artifactId"])
+        assertEquals("business-flows/place-order-flow", variables["artifactId"])
     }
 
     @Test

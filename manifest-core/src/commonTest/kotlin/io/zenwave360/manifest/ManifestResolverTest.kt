@@ -521,7 +521,7 @@ class ManifestResolverTest {
             artifactPath = "contracts/orders.openapi.yaml",
         )
         assertEquals(
-            "https://artifacts.example.com/artifactory/maven-releases/io/arcadia/orders/orders.openapi/1.1.0/orders.openapi-1.1.0.jar!/contracts/orders.openapi.yaml",
+            "https://artifacts.example.com/artifactory/maven-releases/io/arcadia/orders/contracts%2Forders.openapi/1.1.0/contracts%2Forders.openapi-1.1.0.jar!/contracts/orders.openapi.yaml",
             loader.buildArtifactCandidates(artifactory, artifactory.services.single(), artifactory.services.single().artifacts.single()).single().uri,
         )
 
@@ -538,7 +538,7 @@ class ManifestResolverTest {
         )
         val candidate = loader.buildArtifactCandidates(central, central.services.single(), central.services.single().artifacts.single()).single()
         assertEquals(
-            "https://repo.maven.apache.org/maven2/io/arcadia/orders/orders.openapi/1.1.0/orders.openapi-1.1.0.jar",
+            "https://repo.maven.apache.org/maven2/io/arcadia/orders/contracts%2Forders.openapi/1.1.0/contracts%2Forders.openapi-1.1.0.jar",
             candidate.uri,
         )
         assertEquals("contracts/orders.openapi.yaml", candidate.archiveEntry)

@@ -33,7 +33,7 @@
     },
     "runtimeExpression": {
       "allOf": [{ "$ref": "#/$defs/nonBlank" }],
-      "description": "Literal expression using owner.id, explicit owner.repository, domain.id, subdomain.id, service.id, explicit service.repository, domain.version, subdomain.version, service.version, artifact.version, artifact.path, explicit artifact.name, artifact.fileName, artifact.fileNameWithoutExtension, content.path, service.docs[key], groupId, artifactId, effective version, or source-local server."
+      "description": "Literal expression using owner.id, explicit owner.repository, domain.id, subdomain.id, service.id, explicit service.repository, domain.version, subdomain.version, service.version, artifact.version, artifact.path, artifact.pathWithoutExtension, explicit artifact.name, artifact.fileName, artifact.fileNameWithoutExtension, content.path, service.docs[key], groupId, artifactId, effective version, or source-local server."
     },
     "config": {
       "type": "object",
@@ -50,7 +50,7 @@
         },
         "artifactIdExpression": {
           "$ref": "#/$defs/runtimeExpression",
-          "default": "${artifact.fileNameWithoutExtension}"
+          "default": "${artifact.pathWithoutExtension}"
         },
         "properties": {
           "type": "object",

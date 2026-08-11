@@ -88,7 +88,7 @@ class ManifestParserTest {
         )
 
         assertEquals("${'$'}{owner.id}", manifest.config.groupIdExpression)
-        assertEquals("${'$'}{artifact.fileNameWithoutExtension}", manifest.config.artifactIdExpression)
+        assertEquals("${'$'}{artifact.pathWithoutExtension}", manifest.config.artifactIdExpression)
         assertEquals("${'$'}{domain.id}/${'$'}{subdomain.id}/${'$'}{service.id}", manifest.config.sources.workspace.basePathExpression)
         assertEquals("https://github.com", manifest.config.sources.git!!.server)
         assertEquals(
@@ -119,10 +119,14 @@ class ManifestParserTest {
         assertNull(artifacts[0].name)
         assertEquals("orders.openapi.yaml", artifacts[0].fileName)
         assertEquals("orders.openapi", artifacts[0].fileNameWithoutExtension)
+        assertEquals("contracts/orders.openapi", artifacts[0].pathWithoutExtension)
         assertEquals("archive", artifacts[1].name)
         assertEquals("archive.tar", artifacts[1].fileNameWithoutExtension)
+        assertEquals("archive.tar", artifacts[1].pathWithoutExtension)
         assertEquals(".gitignore", artifacts[2].fileNameWithoutExtension)
+        assertEquals(".gitignore", artifacts[2].pathWithoutExtension)
         assertEquals("README", artifacts[3].fileNameWithoutExtension)
+        assertEquals("README", artifacts[3].pathWithoutExtension)
     }
 
     @Test

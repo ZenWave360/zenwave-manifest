@@ -3,6 +3,7 @@ package io.zenwave360.manifest
 import io.zenwave360.jsonrefparser.RefParser
 import io.zenwave360.jsonrefparser.io.DocumentLoader
 import io.zenwave360.jsonrefparser.io.defaultLoaders
+import io.zenwave360.jsonrefparser.model.ParsedDocument
 import kotlin.jvm.JvmOverloads
 
 class ManifestResolutionException(message: String) : IllegalArgumentException(message)
@@ -12,6 +13,15 @@ class ManifestResourceLoadException(
     val candidates: List<ManifestResolvedResource>,
     cause: Throwable? = null,
 ) : IllegalStateException(message, cause)
+
+/**
+ * Internal parser result used by manifest editors that need to retain the source document and
+ * JSON-pointer location of a resolved manifest node.
+ */
+internal data class ParsedManifestDocument(
+    val manifest: ZenWaveManifest,
+    val document: ParsedDocument,
+)
 
 @Suppress("unused")
 class ZenWaveManifestLoader(
@@ -24,12 +34,17 @@ class ZenWaveManifestLoader(
     }
 
     suspend fun parse(uri: String, text: String): ZenWaveManifest {
+        return parseDocument(uri, text).manifest
+    }
+
+    internal suspend fun parseDocument(uri: String, text: String): ParsedManifestDocument {
         val normalizedUri = ManifestReferenceResolver.normalizeUri(uri)
-        val root = RefParser.fromText(
+        val document = RefParser.fromText(
             shieldConsumerRefs(text),
             baseUri = normalizedUri,
-            loaders = documentLoaders,
-        ).parse().getParsedDocument().schema
+            loaders = manifestDocumentLoaders(),
+        ).dereference().getParsedDocument()
+        val root = document.schema
         val configNode = root.mapAt("config")
         val diagnostics = mutableListOf<ManifestDiagnostic>()
         val properties = parseProperties(configNode.mapAt("properties"), diagnostics)
@@ -44,7 +59,7 @@ class ZenWaveManifestLoader(
             allowRuntime = true,
         )
         val artifactIdExpression = expandStatic(
-            configNode["artifactIdExpression"]?.toString() ?: "\${artifact.fileNameWithoutExtension}",
+            configNode["artifactIdExpression"]?.toString() ?: "\${artifact.pathWithoutExtension}",
             "config.artifactIdExpression",
             properties,
             diagnostics,
@@ -68,7 +83,10 @@ class ZenWaveManifestLoader(
         val domains = root.mapAt("domains").map { (domainKey, domainValue) ->
             parseDomain(properties, diagnostics, allServices, domainKey, domainValue.asMap())
         }
-        return ZenWaveManifest(normalizedUri, config, domains, allServices, diagnostics)
+        return ParsedManifestDocument(
+            ZenWaveManifest(normalizedUri, config, domains, allServices, diagnostics),
+            document,
+        )
     }
 
     suspend fun loadResourceText(uri: String): String =
@@ -999,6 +1017,14 @@ class ZenWaveManifestLoader(
     private fun shieldConsumerRefs(text: String): String =
         text.replace(Regex("""(^[ \t]*-[ \t]*)[${'$'}]ref:""", RegexOption.MULTILINE), "$1service:")
 
+    private fun manifestDocumentLoaders(): List<DocumentLoader> = documentLoaders.map { delegate ->
+        object : DocumentLoader {
+            override fun canLoad(uri: String): Boolean = delegate.canLoad(uri)
+
+            override suspend fun load(uri: String): String = shieldConsumerRefs(delegate.load(uri))
+        }
+    }
+
     private fun redactUri(uri: String): String = uri
         .replace(Regex("""(://)[^/@\s]+@"""), "$1<redacted>@")
         .replace(Regex("""([?&][^=&#]+)=([^&#]*)"""), "$1=<redacted>")
@@ -1034,7 +1060,7 @@ class ZenWaveManifestLoader(
         val CANONICAL_RUNTIME_VARIABLES = setOf(
             "domain.id", "subdomain.id", "service.id", "service.repository", "owner.id", "owner.repository",
             "domain.version", "subdomain.version",
-            "service.version", "artifact.version", "artifact.path", "artifact.name",
+            "service.version", "artifact.version", "artifact.path", "artifact.pathWithoutExtension", "artifact.name",
             "artifact.fileName", "artifact.fileNameWithoutExtension", "content.path",
             "groupId", "artifactId", "version",
         )
