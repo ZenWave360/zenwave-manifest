@@ -236,6 +236,7 @@
         },
         "consumers": {
           "type": "array",
+          "description": "Services and consuming artifacts in service.id#artifact.id form. The artifact selector is resolved by effective artifactId first and may use type:<type> for explicit type selection.",
           "items": {
             "oneOf": [
               { "type": "string" },

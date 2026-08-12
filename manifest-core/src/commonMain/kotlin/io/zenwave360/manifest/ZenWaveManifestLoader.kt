@@ -83,6 +83,7 @@ class ZenWaveManifestLoader(
         val domains = root.mapAt("domains").map { (domainKey, domainValue) ->
             parseDomain(properties, diagnostics, allServices, domainKey, domainValue.asMap())
         }
+        diagnoseConsumerServices(allServices, diagnostics)
         return ParsedManifestDocument(
             ZenWaveManifest(normalizedUri, config, domains, allServices, diagnostics),
             document,
@@ -982,19 +983,49 @@ class ZenWaveManifestLoader(
             name.startsWith("service.docs[") || name == "server"
 
     private fun normalizeConsumer(currentDomain: String, value: Any?): String? = when (value) {
-        is String -> if (value.trim().startsWith("#/")) normalizeJsonPointerReference(value) else normalizeServiceRef(currentDomain, value)
+        is String -> normalizeConsumerString(currentDomain, value)
         is Map<*, *> -> normalizeConsumerMap(currentDomain, value)
         else -> null
     }
 
     private fun normalizeConsumerMap(currentDomain: String, value: Map<*, *>): String? {
         val serviceRef = value["service"] as? String
-        if (serviceRef != null) return if (serviceRef.trim().startsWith("#/")) {
-            normalizeJsonPointerReference(serviceRef)
-        } else {
-            normalizeServiceRef(currentDomain, serviceRef)
-        }
+        if (serviceRef != null) return normalizeConsumerString(currentDomain, serviceRef)
         return normalizeJsonPointerReference(value["\$ref"] as? String)
+    }
+
+    private fun normalizeConsumerString(currentDomain: String, value: String): String? {
+        val raw = value.nonBlankOrNull() ?: return null
+        if (raw.startsWith("#/")) return normalizeJsonPointerReference(raw)
+        // Artifact-qualified references are resolved after the complete global service index exists.
+        if ('#' in raw) return raw
+        return normalizeServiceRef(currentDomain, raw)
+    }
+
+    private fun diagnoseConsumerServices(
+        services: List<ManifestService>,
+        diagnostics: MutableList<ManifestDiagnostic>,
+    ) {
+        val byRef = services.associateBy { it.serviceRef }
+        val byId = services.associateBy { it.id }
+        services.forEach { declaringService ->
+            declaringService.consumers.forEachIndexed { index, raw ->
+                val reference = runCatching { ManifestConsumerReference.parse(raw) }.getOrNull() ?: return@forEachIndexed
+                // Suffix-less declarations retain legacy normalization and diagnostics behavior.
+                if (reference.artifactSelector == null) return@forEachIndexed
+                val resolved = byRef[reference.serviceReference]
+                    ?: byId[reference.serviceReference]
+                    ?: byRef["${declaringService.domainKey}/${reference.serviceReference}"]
+                if (resolved == null) {
+                    diagnostics += ManifestDiagnostic(
+                        message = "Consumer service '${reference.serviceReference}' cannot be resolved",
+                        severity = ManifestDiagnosticSeverity.WARNING,
+                        code = "unresolved-consumer-reference",
+                        location = "${declaringService.serviceRef}.consumers[$index]",
+                    )
+                }
+            }
+        }
     }
 
     private fun normalizeJsonPointerReference(pointer: String?): String? {

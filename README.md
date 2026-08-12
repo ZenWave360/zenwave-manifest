@@ -205,6 +205,39 @@ domains:
 `ManifestArtifactCatalog` resolves every declared artifact together with its owner and effective
 coordinates. Declared artifact `type` values remain an open string namespace: `openapi`,
 `asyncapi`, `zdl`, `zfl`, `grpc`, and future types require no registration with the library.
+
+### Consumer artifact references
+
+A service may identify the exact artifact that consumes one of its contracts with
+`service.id#artifact.id`. The artifact selector is matched against the effective artifact ID first,
+including `config.artifactIdExpression`; `type:<type>` explicitly selects every artifact of a type.
+Plain selectors fall back to an artifact type only when exactly one artifact matches.
+
+```yaml
+# schema-test: valid
+domains:
+  catalog:
+    services:
+      inventory:
+        artifacts:
+          - type: asyncapi
+            path: asyncapi.yml
+            version: 1.0.0
+        consumers:
+          - orders.checkout#asyncapi-client
+  orders:
+    services:
+      checkout:
+        id: orders.checkout
+        artifacts:
+          - type: asyncapi-client
+            path: asyncapi-client.yml
+            version: 1.0.0
+```
+
+`ManifestConsumerIndex` resolves these declarations in both directions and infers compatible
+provider artifacts from `ManifestConsumptionRules`. Suffix-less service references remain accepted
+for backwards compatibility but do not create artifact-level consumption edges.
 Callers can resolve either a unique effective artifact ID or every artifact of a declared type on
 one owner:
 
