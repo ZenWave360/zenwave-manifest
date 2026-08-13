@@ -16,4 +16,13 @@ if (localJsonRefParser.exists()) {
     }
 }
 
-include("manifest-core")
+val localDslKotlin = file("../dsl-kotlin")
+if (localDslKotlin.exists()) {
+    includeBuild(localDslKotlin) {
+        dependencySubstitution {
+            substitute(module("io.zenwave360.dsl:dsl-kotlin")).using(project(":"))
+        }
+    }
+}
+
+include("manifest-core", "manifest-graph")

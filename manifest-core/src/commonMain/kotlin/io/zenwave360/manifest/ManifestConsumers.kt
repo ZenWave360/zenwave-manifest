@@ -39,6 +39,10 @@ object ManifestConsumptionRules {
     val DEFAULT: Map<String, List<String>> = mapOf(
         "asyncapi-client" to listOf("asyncapi"),
         "openapi" to listOf("openapi"),
+        "zdl" to listOf("zdl", "openapi", "asyncapi"),
+        // Dormant until ManifestConsumptionEdge supports domain-owned consumer artifacts. The
+        // manifest-graph module currently derives zfl -> zdl relationships from @zdl evidence.
+        "zfl" to listOf("zdl"),
     )
 
     @JvmStatic

@@ -71,6 +71,24 @@ class BlockingZenWaveManifestLoader @JvmOverloads constructor(
         runBlocking { delegate.loadArtifactText(manifest, service, artifact, options) }
 
     @JvmOverloads
+    fun loadArtifactText(
+        manifest: ZenWaveManifest,
+        owner: ManifestArtifactOwner,
+        artifact: ManifestArtifact,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): String =
+        runBlocking { delegate.loadArtifactText(manifest, owner, artifact, options) }
+
+    @JvmOverloads
+    fun loadArtifactResult(
+        manifest: ZenWaveManifest,
+        owner: ManifestArtifactOwner,
+        artifact: ManifestArtifact,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): ManifestResourceLoadResult =
+        runBlocking { delegate.loadArtifactResult(manifest, owner, artifact, options) }
+
+    @JvmOverloads
     fun resolveArtifact(
         manifest: ZenWaveManifest,
         service: ManifestService,
@@ -78,4 +96,13 @@ class BlockingZenWaveManifestLoader @JvmOverloads constructor(
         options: ManifestLoadOptions = ManifestLoadOptions(),
     ): ManifestResolvedResource =
         runBlocking { delegate.resolveArtifact(manifest, service, artifact, options) }
+
+    @JvmOverloads
+    fun resolveArtifact(
+        manifest: ZenWaveManifest,
+        owner: ManifestArtifactOwner,
+        artifact: ManifestArtifact,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): ManifestResolvedResource =
+        runBlocking { delegate.resolveArtifact(manifest, owner, artifact, options) }
 }
