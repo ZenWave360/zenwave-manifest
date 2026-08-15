@@ -1,5 +1,6 @@
 [versions]
 json-schema-ref-parser-kmp = "0.9.23"
+dsl-kotlin = "1.9.0-SNAPSHOT"
 kotlin = "2.3.0"
 kotlinx-coroutines = "1.8.1"
 kover = "0.9.4"
@@ -7,6 +8,7 @@ maven-publish = "0.34.0"
 
 [libraries]
 json-schema-ref-parser-kmp = { module = "io.zenwave360.jsonrefparser:json-schema-ref-parser-kmp", version.ref = "json-schema-ref-parser-kmp" }
+dsl-kotlin = { module = "io.zenwave360.dsl:dsl-kotlin", version.ref = "dsl-kotlin" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 

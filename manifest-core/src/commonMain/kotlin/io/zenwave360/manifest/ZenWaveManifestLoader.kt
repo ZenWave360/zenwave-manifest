@@ -83,6 +83,7 @@ class ZenWaveManifestLoader(
         val domains = root.mapAt("domains").map { (domainKey, domainValue) ->
             parseDomain(properties, diagnostics, allServices, domainKey, domainValue.asMap())
         }
+        diagnoseConsumerServices(allServices, diagnostics)
         return ParsedManifestDocument(
             ZenWaveManifest(normalizedUri, config, domains, allServices, diagnostics),
             document,
@@ -165,26 +166,62 @@ class ZenWaveManifestLoader(
         service: ManifestService,
         artifact: ManifestArtifact,
         options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): String = loadArtifactText(manifest, service as ManifestArtifactOwner, artifact, options)
+
+    suspend fun loadArtifactText(
+        manifest: ZenWaveManifest,
+        owner: ManifestArtifactOwner,
+        artifact: ManifestArtifact,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
     ): String = loadOwnedResourceText(
         manifest,
-        service,
+        owner,
         artifact.path,
         artifact,
-        "${service.serviceRef}.artifacts.${artifact.name ?: artifact.path}",
+        "${owner.artifactOwnerRef}.artifacts.${artifact.name ?: artifact.path}",
         options,
     ).second
+
+    suspend fun loadArtifactResult(
+        manifest: ZenWaveManifest,
+        owner: ManifestArtifactOwner,
+        artifact: ManifestArtifact,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): ManifestResourceLoadResult = try {
+        val (resource, content) = loadOwnedResourceText(
+            manifest,
+            owner,
+            artifact.path,
+            artifact,
+            "${owner.artifactOwnerRef}.artifacts.${artifact.name ?: artifact.path}",
+            options,
+        )
+        ManifestResourceLoadResult(artifact.path, resource, content)
+    } catch (error: Exception) {
+        ManifestResourceLoadResult(
+            path = artifact.path,
+            errorMessage = error.message ?: "Cannot load artifact '${artifact.path}'",
+        )
+    }
 
     suspend fun resolveArtifact(
         manifest: ZenWaveManifest,
         service: ManifestService,
         artifact: ManifestArtifact,
         options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): ManifestResolvedResource = resolveArtifact(manifest, service as ManifestArtifactOwner, artifact, options)
+
+    suspend fun resolveArtifact(
+        manifest: ZenWaveManifest,
+        owner: ManifestArtifactOwner,
+        artifact: ManifestArtifact,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
     ): ManifestResolvedResource = loadOwnedResourceText(
         manifest,
-        service,
+        owner,
         artifact.path,
         artifact,
-        "${service.serviceRef}.artifacts.${artifact.name ?: artifact.path}",
+        "${owner.artifactOwnerRef}.artifacts.${artifact.name ?: artifact.path}",
         options,
     ).first
 
@@ -215,14 +252,22 @@ class ZenWaveManifestLoader(
         service: ManifestService,
         artifact: ManifestArtifact,
         options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): List<ManifestResolvedResource> =
+        buildArtifactCandidates(manifest, service as ManifestArtifactOwner, artifact, options)
+
+    fun buildArtifactCandidates(
+        manifest: ZenWaveManifest,
+        owner: ManifestArtifactOwner,
+        artifact: ManifestArtifact,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
     ): List<ManifestResolvedResource> {
         if (ManifestReferenceResolver.hasScheme(artifact.path)) return listOf(directResource(artifact.path))
         return buildResourceCandidates(
             manifest,
-            service,
+            owner,
             artifact,
             artifact.path,
-            baseContext(service, artifact, artifact.path),
+            baseContext(owner, artifact, artifact.path),
             options,
         )
     }
@@ -253,8 +298,19 @@ class ZenWaveManifestLoader(
         artifact: ManifestArtifact,
         reference: String? = null,
         options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): ManifestResolvedResource? = resolveArtifactReference(
+        manifest, service as ManifestArtifactOwner, artifact, reference, options,
+    )
+
+    @JvmOverloads
+    fun resolveArtifactReference(
+        manifest: ZenWaveManifest,
+        owner: ManifestArtifactOwner,
+        artifact: ManifestArtifact,
+        reference: String? = null,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
     ): ManifestResolvedResource? {
-        val resource = buildArtifactCandidates(manifest, service, artifact, options).firstOrNull()
+        val resource = buildArtifactCandidates(manifest, owner, artifact, options).firstOrNull()
             ?: return null
         return reference.nonBlankOrNull()?.let(resource::resolveReference) ?: resource
     }
@@ -279,11 +335,20 @@ class ZenWaveManifestLoader(
         artifact: ManifestArtifact,
         reference: String? = null,
         options: ManifestLoadOptions = ManifestLoadOptions(),
-    ): String? = resolveArtifactReference(manifest, service, artifact, reference, options)?.referenceUri()
+    ): String? = artifactReferenceUri(manifest, service as ManifestArtifactOwner, artifact, reference, options)
+
+    @JvmOverloads
+    fun artifactReferenceUri(
+        manifest: ZenWaveManifest,
+        owner: ManifestArtifactOwner,
+        artifact: ManifestArtifact,
+        reference: String? = null,
+        options: ManifestLoadOptions = ManifestLoadOptions(),
+    ): String? = resolveArtifactReference(manifest, owner, artifact, reference, options)?.referenceUri()
 
     private suspend fun loadOwnedResourceText(
         manifest: ZenWaveManifest,
-        service: ManifestService,
+        owner: ManifestArtifactOwner,
         resourcePath: String,
         artifact: ManifestArtifact?,
         location: String,
@@ -293,8 +358,8 @@ class ZenWaveManifestLoader(
             val direct = directResource(resourcePath)
             return direct to loadText(direct.uri)
         }
-        val context = baseContext(service, artifact, resourcePath)
-        val candidates = buildResourceCandidates(manifest, service, artifact, resourcePath, context, options)
+        val context = baseContext(owner, artifact, resourcePath)
+        val candidates = buildResourceCandidates(manifest, owner, artifact, resourcePath, context, options)
         var lastError: Throwable? = null
         for (candidate in candidates) {
             try {
@@ -323,7 +388,7 @@ class ZenWaveManifestLoader(
 
     private fun buildResourceCandidates(
         manifest: ZenWaveManifest,
-        service: ManifestService,
+        owner: ManifestArtifactOwner,
         artifact: ManifestArtifact?,
         resourcePath: String,
         context: ManifestResolutionContext,
@@ -337,7 +402,7 @@ class ZenWaveManifestLoader(
                 gitCandidates(
                     configured,
                     expression,
-                    addSelectedCoordinates(manifest, service, artifact, context, expression),
+                    addSelectedCoordinates(manifest, owner, artifact, context, expression),
                 )
             }
             ManifestSourceName.APICURIO -> if (artifact == null) emptyList() else {
@@ -346,17 +411,17 @@ class ZenWaveManifestLoader(
                 apicurioCandidates(
                     configured,
                     expression,
-                    addSelectedCoordinates(manifest, service, artifact, context, expression),
+                    addSelectedCoordinates(manifest, owner, artifact, context, expression),
                 )
             }
             ManifestSourceName.ARTIFACTORY -> manifest.config.sources.artifactory!!.let { configured ->
                 artifactoryCandidates(
                     configured,
-                    addSelectedCoordinates(manifest, service, artifact, context, configured.contentUrlExpression),
+                    addSelectedCoordinates(manifest, owner, artifact, context, configured.contentUrlExpression),
                 )
             }
             ManifestSourceName.MAVEN -> if (artifact == null) emptyList() else {
-                val coordinates = resolveCoordinates(manifest, context, service, artifact)
+                val coordinates = resolveCoordinates(manifest, context, owner, artifact)
                 mavenCandidates(
                     manifest.config.sources.maven!!,
                     artifact,
@@ -518,7 +583,7 @@ class ZenWaveManifestLoader(
 
     private fun addSelectedCoordinates(
         manifest: ZenWaveManifest,
-        service: ManifestService,
+        owner: ManifestArtifactOwner,
         artifact: ManifestArtifact?,
         context: ManifestResolutionContext,
         expression: String,
@@ -526,7 +591,7 @@ class ZenWaveManifestLoader(
         val needsGroupId = expressionSelects(expression, "groupId")
         val needsArtifactId = expressionSelects(expression, "artifactId")
         return context.copy(
-            groupId = if (needsGroupId) resolveGroupId(manifest, service, context) else context.groupId,
+            groupId = if (needsGroupId) resolveGroupId(manifest, owner, context) else context.groupId,
             artifactId = if (needsArtifactId) {
                 artifact?.let { resolveArtifactId(manifest, it, context) }
                     ?: throw ManifestResolutionException("Required coordinate 'artifactId' is unresolved")
@@ -982,19 +1047,49 @@ class ZenWaveManifestLoader(
             name.startsWith("service.docs[") || name == "server"
 
     private fun normalizeConsumer(currentDomain: String, value: Any?): String? = when (value) {
-        is String -> if (value.trim().startsWith("#/")) normalizeJsonPointerReference(value) else normalizeServiceRef(currentDomain, value)
+        is String -> normalizeConsumerString(currentDomain, value)
         is Map<*, *> -> normalizeConsumerMap(currentDomain, value)
         else -> null
     }
 
     private fun normalizeConsumerMap(currentDomain: String, value: Map<*, *>): String? {
         val serviceRef = value["service"] as? String
-        if (serviceRef != null) return if (serviceRef.trim().startsWith("#/")) {
-            normalizeJsonPointerReference(serviceRef)
-        } else {
-            normalizeServiceRef(currentDomain, serviceRef)
-        }
+        if (serviceRef != null) return normalizeConsumerString(currentDomain, serviceRef)
         return normalizeJsonPointerReference(value["\$ref"] as? String)
+    }
+
+    private fun normalizeConsumerString(currentDomain: String, value: String): String? {
+        val raw = value.nonBlankOrNull() ?: return null
+        if (raw.startsWith("#/")) return normalizeJsonPointerReference(raw)
+        // Artifact-qualified references are resolved after the complete global service index exists.
+        if ('#' in raw) return raw
+        return normalizeServiceRef(currentDomain, raw)
+    }
+
+    private fun diagnoseConsumerServices(
+        services: List<ManifestService>,
+        diagnostics: MutableList<ManifestDiagnostic>,
+    ) {
+        val byRef = services.associateBy { it.serviceRef }
+        val byId = services.associateBy { it.id }
+        services.forEach { declaringService ->
+            declaringService.consumers.forEachIndexed { index, raw ->
+                val reference = runCatching { ManifestConsumerReference.parse(raw) }.getOrNull() ?: return@forEachIndexed
+                // Suffix-less declarations retain legacy normalization and diagnostics behavior.
+                if (reference.artifactSelector == null) return@forEachIndexed
+                val resolved = byRef[reference.serviceReference]
+                    ?: byId[reference.serviceReference]
+                    ?: byRef["${declaringService.domainKey}/${reference.serviceReference}"]
+                if (resolved == null) {
+                    diagnostics += ManifestDiagnostic(
+                        message = "Consumer service '${reference.serviceReference}' cannot be resolved",
+                        severity = ManifestDiagnosticSeverity.WARNING,
+                        code = "unresolved-consumer-reference",
+                        location = "${declaringService.serviceRef}.consumers[$index]",
+                    )
+                }
+            }
+        }
     }
 
     private fun normalizeJsonPointerReference(pointer: String?): String? {

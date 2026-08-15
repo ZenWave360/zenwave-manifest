@@ -3,6 +3,7 @@ package io.zenwave360.manifest
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -214,6 +215,187 @@ class ZenWaveManifestEditorTest {
         }
         assertEquals(original, reader.read(uri))
     }
+
+    @Test
+    fun updatesOwnerAndArtifactScalarsForASubdomainServicePreservingYamlStyles() = runTest {
+        val uri = "file:///architecture/zenwave-architecture.yml"
+        val reader = MapDocumentReader(mapOf(uri to scalarManifest()))
+
+        val result = ZenWaveManifestEditor(reader).updateScalars(
+            uri,
+            listOf(
+                ManifestScalarUpdate(
+                    ManifestScalarTarget.Owner("commerce/fulfillment/shipping"),
+                    "name",
+                    "Ship's API",
+                ),
+                ManifestScalarUpdate(
+                    ManifestScalarTarget.Artifact(
+                        "commerce/fulfillment/shipping",
+                        "contracts/shipping.yml",
+                    ),
+                    "name",
+                    "Events \"v2\"\\public\tAPI",
+                ),
+            ),
+        )
+
+        assertEquals(2, result.changes.size)
+        assertTrue(result.changes.all { it.changed })
+        assertEquals("Shipping API", result.changes.first().previousValue)
+        assertEquals("Ship's API", result.manifest.services.single().name)
+        assertEquals("Events \"v2\"\\public\tAPI", result.manifest.services.single().artifacts.single().name)
+        val updated = result.documents.single().updatedText
+        assertTrue(updated.contains("name: 'Ship''s API'"))
+        assertTrue(updated.contains("name: \"Events \\\"v2\\\"\\\\public\\tAPI\""))
+    }
+
+    @Test
+    fun noOpUpdatesReturnChangesWithoutDocumentMutations() = runTest {
+        val uri = "file:///architecture/zenwave-architecture.yml"
+        val reader = MapDocumentReader(mapOf(uri to scalarManifest()))
+        val editor = ZenWaveManifestEditor(reader)
+
+        val scalarResult = editor.updateScalars(
+            uri,
+            listOf(
+                ManifestScalarUpdate(
+                    ManifestScalarTarget.Owner("commerce/fulfillment/shipping"),
+                    "repository",
+                    "shipping-api",
+                ),
+            ),
+        )
+        val versionResult = editor.updateArtifactVersions(
+            uri,
+            listOf(
+                ManifestArtifactVersionUpdate(
+                    ManifestArtifactSelector.artifactInOwner(
+                        "commerce/fulfillment/shipping",
+                        "contracts/shipping",
+                    ),
+                    "1.0.0",
+                ),
+            ),
+        )
+
+        assertFalse(scalarResult.changes.single().changed)
+        assertTrue(scalarResult.documents.isEmpty())
+        assertFalse(versionResult.changes.single().changed)
+        assertTrue(versionResult.documents.isEmpty())
+    }
+
+    @Test
+    fun rejectsInvalidAndAmbiguousUpdatesBeforeBuildingDocuments() = runTest {
+        val uri = "file:///architecture/zenwave-architecture.yml"
+        val editor = ZenWaveManifestEditor(MapDocumentReader(mapOf(uri to scalarManifest())))
+        val owner = ManifestScalarTarget.Owner("commerce/fulfillment/shipping")
+
+        assertFailsWith<IllegalArgumentException> { ManifestScalarUpdate(owner, " ", "value") }
+        assertFailsWith<IllegalArgumentException> { ManifestScalarUpdate(owner, "name", "two\nlines") }
+        assertFailsWith<IllegalArgumentException> {
+            ManifestArtifactVersionUpdate(
+                ManifestArtifactSelector.artifactInOwner(owner.ownerRef, "contracts/shipping"),
+                " ",
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ManifestArtifactVersionUpdate(
+                ManifestArtifactSelector.artifactInOwner(owner.ownerRef, "contracts/shipping"),
+                "two\rlines",
+            )
+        }
+        assertFailsWith<IllegalArgumentException> { editor.updateScalars(uri, emptyList()) }
+        assertFailsWith<IllegalArgumentException> {
+            editor.updateScalars(
+                uri,
+                listOf(
+                    ManifestScalarUpdate(owner, "name", "one"),
+                    ManifestScalarUpdate(owner, "name", "two"),
+                ),
+            )
+        }
+        assertFailsWith<IllegalArgumentException> { editor.updateArtifactVersions(uri, emptyList()) }
+
+        val selector = ManifestArtifactSelector.artifactInOwner(owner.ownerRef, "contracts/shipping")
+        assertFailsWith<IllegalArgumentException> {
+            editor.updateArtifactVersions(
+                uri,
+                listOf(
+                    ManifestArtifactVersionUpdate(selector, "1.1.0"),
+                    ManifestArtifactVersionUpdate(selector, "1.2.0"),
+                ),
+            )
+        }
+        assertFailsWith<ManifestEditException> {
+            editor.updateArtifactVersions(
+                uri,
+                listOf(
+                    ManifestArtifactVersionUpdate(selector, "1.1.0"),
+                    ManifestArtifactVersionUpdate(
+                        ManifestArtifactSelector.artifactInRepository("shipping-api", "contracts/shipping"),
+                        "1.2.0",
+                    ),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun reportsMissingOwnersArtifactsAndScalarLocations() = runTest {
+        val uri = "file:///architecture/zenwave-architecture.yml"
+        val editor = ZenWaveManifestEditor(MapDocumentReader(mapOf(uri to scalarManifest())))
+
+        assertFailsWith<ManifestEditException> {
+            editor.updateScalars(
+                uri,
+                listOf(ManifestScalarUpdate(ManifestScalarTarget.Owner("missing/service"), "name", "new")),
+            )
+        }
+        assertFailsWith<ManifestEditException> {
+            editor.updateScalars(
+                uri,
+                listOf(
+                    ManifestScalarUpdate(
+                        ManifestScalarTarget.Artifact(
+                            "commerce/fulfillment/shipping",
+                            "missing.yml",
+                        ),
+                        "name",
+                        "new",
+                    ),
+                ),
+            )
+        }
+        assertFailsWith<ManifestEditException> {
+            editor.updateScalars(
+                uri,
+                listOf(
+                    ManifestScalarUpdate(
+                        ManifestScalarTarget.Owner("commerce/fulfillment/shipping"),
+                        "description",
+                        "new",
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun scalarManifest(): String = """
+        domains:
+          commerce:
+            subdomains:
+              fulfillment:
+                services:
+                  shipping:
+                    name: 'Shipping API'
+                    repository: shipping-api
+                    artifacts:
+                      - name: "Shipping events"
+                        type: asyncapi
+                        path: contracts/shipping.yml
+                        version: 1.0.0
+    """.trimIndent()
 
     private class MapDocumentReader(
         private val documents: Map<String, String>,
