@@ -20,7 +20,7 @@ class ZflGraphAnalyzerTest {
         val result = ArchitectureGraphBuilder(loader).build(manifest)
         val graph = result.graph
         val flow = graph.nodes.single { it.kind == ArchitectureNodeKind.ZFL_FLOW && it.label == "CheckoutFlow" }
-        assertEquals("completed=OrderCreated;stockGone=StockUnavailable", flow.attributes["endOutcomes"])
+        assertEquals(setOf("completed", "stockGone"), graph.flowOutcomes(flow.id).map { it.label }.toSet())
 
         val start = graph.nodes.single {
             it.kind == ArchitectureNodeKind.ZFL_STEP && it.label == "StartOrderCheckout" && it.attributes["role"] == "start"
@@ -32,13 +32,14 @@ class ZflGraphAnalyzerTest {
             it.kind == ArchitectureEdgeKind.TRIGGERS && it.source == start.id && it.target == startEvent.id
         })
 
-        val startCommand = graph.nodes.single {
-            it.kind == ArchitectureNodeKind.ZFL_STEP && it.label == "startOrderCheckout" && it.attributes["role"] == null
+        val startOperation = graph.nodes.single {
+            it.kind == ArchitectureNodeKind.ZFL_OPERATION && it.label == "startOrderCheckout"
         }
+        val startCommand = graph.operationOccurrences(startOperation.id).first { it.attributes["occurrenceKey"]?.contains("StartOrderCheckout") == true }
         assertTrue(graph.edges.any {
             it.kind == ArchitectureEdgeKind.TRIGGERS && it.source == startEvent.id && it.target == startCommand.id
         })
-        val createOrder = graph.nodes.single { it.kind == ArchitectureNodeKind.ZFL_STEP && it.label == "createOrder" }
+        val createOrder = graph.nodes.single { it.kind == ArchitectureNodeKind.ZFL_OPERATION && it.label == "createOrder" }
         assertTrue(graph.edges.any {
             it.kind == ArchitectureEdgeKind.INVOKES && it.source == startCommand.id && it.target == createOrder.id &&
                 it.attributes["outcome"] == "StockReserved" && it.attributes["role"] == "handler"
@@ -48,6 +49,12 @@ class ZflGraphAnalyzerTest {
             it.kind == ArchitectureEdgeKind.EMITS && it.source == startCommand.id && it.target == unavailable.id &&
                 it.attributes["role"] == "handler"
         })
+        val created = graph.nodes.single { it.kind == ArchitectureNodeKind.ZFL_EVENT && it.label == "OrderCreated" }
+        val completed = graph.flowOutcomes(flow.id).single { it.label == "completed" }
+        assertTrue(graph.edges.any {
+            it.kind == ArchitectureEdgeKind.RESULTS_IN && it.source == created.id && it.target == completed.id
+        })
+        assertTrue(graph.edges.none { it.attributes.containsKey("endOutcomes") })
     }
 
     private class MapDocumentLoader(private val documents: Map<String, String>) : DocumentLoader {

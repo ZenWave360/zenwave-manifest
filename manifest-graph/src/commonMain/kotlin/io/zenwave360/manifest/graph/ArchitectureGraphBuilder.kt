@@ -116,6 +116,7 @@ class ArchitectureGraphBuilder @JvmOverloads constructor(
         }
 
         linkCrossArtifactEvidence(nodes, edges, diagnostics)
+        validateBindingEdges(nodes, edges, diagnostics)
 
         val unresolvedSemanticInvocations = edges.values.filter { edge ->
             edge.kind == ArchitectureEdgeKind.INVOKES &&
@@ -128,6 +129,20 @@ class ArchitectureGraphBuilder @JvmOverloads constructor(
                 severity = ArchitectureDiagnosticSeverity.WARNING,
                 code = "unresolved-zdl-method-reference",
                 source = edge.sourceInfo,
+            )
+            edges.remove(edge.id)
+        }
+
+        edges.values.filter { edge ->
+            edge.kind == ArchitectureEdgeKind.RESOLVES_TO && edge.target !in nodes
+        }.toList().forEach { edge ->
+            val sourceNode = nodes[edge.source]
+            diagnostics += ArchitectureDiagnostic(
+                message = "ZFL ${if (sourceNode?.kind == ArchitectureNodeKind.ZFL_EVENT) "event" else "operation"} " +
+                    "'${sourceNode?.label ?: edge.source}' cannot resolve its declared ZDL target",
+                severity = ArchitectureDiagnosticSeverity.WARNING,
+                code = if (sourceNode?.kind == ArchitectureNodeKind.ZFL_EVENT) "unresolved-zfl-event" else "unresolved-zfl-operation",
+                source = edge.sourceInfo ?: sourceNode?.source,
             )
             edges.remove(edge.id)
         }
@@ -279,6 +294,52 @@ class ArchitectureGraphBuilder @JvmOverloads constructor(
         val channels = nodes.values.filter { it.kind == ArchitectureNodeKind.CHANNEL }
 
         nodes.values.filter { it.kind == ArchitectureNodeKind.ZDL_METHOD }.forEach { method ->
+            val referencedApis = outgoingEdgeTargets(method.id, ArchitectureEdgeKind.REFERENCES_API, nodes, edges)
+                .filter { it.kind == ArchitectureNodeKind.ZDL_API }
+
+            val httpMethod = method.attributes["httpMethod"]
+            val restPath = method.attributes["restPath"]
+            if (httpMethod != null && restPath != null) {
+                val openApiArtifacts = referencedApis
+                    .filter { it.attributes["type"] == "openapi" }
+                    .flatMap { outgoingEdgeTargets(it.id, ArchitectureEdgeKind.REFERENCES_API, nodes, edges) }
+                    .filter { it.kind == ArchitectureNodeKind.ARTIFACT }
+                    .distinctBy { it.id }
+                val matches = openApiArtifacts.flatMap { artifact ->
+                    nodes.values.filter { candidate ->
+                        candidate.kind == ArchitectureNodeKind.API_OPERATION &&
+                            candidate.ownerId == artifact.id &&
+                            candidate.attributes["method"] == httpMethod &&
+                            normalizePath(candidate.attributes["path"].orEmpty()) == normalizePath(restPath)
+                    }
+                }
+                if (matches.size == 1) {
+                    val target = matches.single()
+                    val intent = target.attributes["intent"] ?: if (httpMethod in setOf("GET", "HEAD")) "query" else "command"
+                    addEdge(
+                        edges, ArchitectureEdgeKind.BINDS_TO, method.id, target.id,
+                        ArchitectureProvenanceKind.INFERRED, discriminator = "openapi-invocation",
+                        attributes = attributes(
+                            ArchitectureBindingAttributes.ROLE to ArchitectureBindingValues.ROLE_INVOCATION,
+                            ArchitectureBindingAttributes.TRANSPORT to ArchitectureBindingValues.TRANSPORT_OPENAPI,
+                            ArchitectureBindingAttributes.MESSAGE_KIND to intent,
+                            ArchitectureBindingAttributes.DIRECTION to ArchitectureBindingValues.DIRECTION_RECEIVE,
+                            ArchitectureBindingAttributes.OPERATION_ID to target.attributes["operationId"],
+                            ArchitectureBindingAttributes.METHOD to httpMethod,
+                            ArchitectureBindingAttributes.PATH to target.attributes["path"],
+                        ),
+                        source = method.source,
+                    )
+                } else {
+                    diagnostics += ArchitectureDiagnostic(
+                        message = "ZDL method '${method.label}' ${if (matches.isEmpty()) "cannot resolve" else "ambiguously resolves"} OpenAPI operation '$httpMethod $restPath'",
+                        severity = ArchitectureDiagnosticSeverity.WARNING,
+                        code = if (matches.isEmpty()) "unresolved-openapi-operation-binding" else "ambiguous-openapi-operation-binding",
+                        source = method.source,
+                    )
+                }
+            }
+
             val apiName = method.attributes["asyncapiApi"] ?: return@forEach
             val channelKey = method.attributes["asyncapiChannel"]
             val topic = method.attributes["asyncapiTopic"]
@@ -317,6 +378,41 @@ class ArchitectureGraphBuilder @JvmOverloads constructor(
                 ),
                 source = method.source,
             )
+            val channelOperations = nodes.values.filter { operation ->
+                operation.kind == ArchitectureNodeKind.API_OPERATION && operation.ownerId == channel.ownerId
+            }.filter { operation ->
+                edges.values.any { edge -> edge.source == operation.id && edge.target == channel.id }
+            }
+            val action = channelOperations.mapNotNull { it.attributes["action"] }.distinct().singleOrNull()
+            if (action == null) {
+                diagnostics += ArchitectureDiagnostic(
+                    message = "ZDL method '${method.label}' references AsyncAPI channel '${channel.label}' without one unambiguous direction",
+                    severity = ArchitectureDiagnosticSeverity.WARNING,
+                    code = "unsupported-asyncapi-binding-direction",
+                    source = method.source,
+                )
+            } else {
+                val messageKind = channel.attributes["messageKind"] ?: ArchitectureBindingValues.KIND_EVENT
+                val role = when {
+                    messageKind == ArchitectureBindingValues.KIND_COMMAND && action == ArchitectureBindingValues.DIRECTION_RECEIVE -> ArchitectureBindingValues.ROLE_INVOCATION
+                    messageKind == ArchitectureBindingValues.KIND_EVENT && action == ArchitectureBindingValues.DIRECTION_RECEIVE -> ArchitectureBindingValues.ROLE_TRIGGER
+                    else -> ArchitectureBindingValues.ROLE_EMISSION
+                }
+                addEdge(
+                    edges, ArchitectureEdgeKind.BINDS_TO, method.id, channel.id,
+                    ArchitectureProvenanceKind.INFERRED, discriminator = "asyncapi-$role",
+                    attributes = attributes(
+                        ArchitectureBindingAttributes.ROLE to role,
+                        ArchitectureBindingAttributes.TRANSPORT to ArchitectureBindingValues.TRANSPORT_ASYNCAPI,
+                        ArchitectureBindingAttributes.MESSAGE_KIND to messageKind,
+                        ArchitectureBindingAttributes.DIRECTION to action,
+                        ArchitectureBindingAttributes.CHANNEL_KEY to channel.attributes["channelKey"],
+                        ArchitectureBindingAttributes.ADDRESS to channel.attributes["address"],
+                        ArchitectureBindingAttributes.OPERATION_ID to channelOperations.singleOrNull()?.label,
+                    ),
+                    source = method.source,
+                )
+            }
         }
 
         nodes.values.filter { it.kind == ArchitectureNodeKind.ZDL_EVENT }.forEach { event ->
@@ -348,6 +444,50 @@ class ArchitectureGraphBuilder @JvmOverloads constructor(
                 attributes = attributes("channel" to channelKey, "topic" to topic),
                 source = event.source,
             )
+            addEdge(
+                edges, ArchitectureEdgeKind.BINDS_TO, event.id, channel.id, ArchitectureProvenanceKind.INFERRED,
+                discriminator = "asyncapi-emission",
+                attributes = attributes(
+                    ArchitectureBindingAttributes.ROLE to ArchitectureBindingValues.ROLE_EMISSION,
+                    ArchitectureBindingAttributes.TRANSPORT to ArchitectureBindingValues.TRANSPORT_ASYNCAPI,
+                    ArchitectureBindingAttributes.MESSAGE_KIND to ArchitectureBindingValues.KIND_EVENT,
+                    ArchitectureBindingAttributes.DIRECTION to ArchitectureBindingValues.DIRECTION_SEND,
+                    ArchitectureBindingAttributes.CHANNEL_KEY to channel.attributes["channelKey"],
+                    ArchitectureBindingAttributes.ADDRESS to channel.attributes["address"],
+                ),
+                source = event.source,
+            )
+        }
+    }
+
+    private fun validateBindingEdges(
+        nodes: Map<String, ArchitectureNode>,
+        edges: MutableMap<String, ArchitectureEdge>,
+        diagnostics: MutableList<ArchitectureDiagnostic>,
+    ) {
+        edges.values.filter { it.kind == ArchitectureEdgeKind.BINDS_TO }.toList().forEach { edge ->
+            val binding = ArchitectureOperationBinding.from(edge)
+            val source = nodes[edge.source]
+            val target = nodes[edge.target]
+            val validTarget = when (binding?.transport) {
+                ArchitectureBindingTransport.OPENAPI -> target?.kind == ArchitectureNodeKind.API_OPERATION
+                ArchitectureBindingTransport.ASYNCAPI -> target?.kind == ArchitectureNodeKind.CHANNEL
+                null -> false
+            }
+            val validSource = source?.kind in setOf(ArchitectureNodeKind.ZDL_METHOD, ArchitectureNodeKind.ZDL_EVENT)
+            val validInvocation = binding?.role != ArchitectureBindingRole.INVOCATION ||
+                (binding.direction == ArchitectureBindingDirection.RECEIVE &&
+                    (binding.messageKind != ArchitectureBindingMessageKind.QUERY ||
+                        binding.transport == ArchitectureBindingTransport.OPENAPI && binding.method in setOf("GET", "HEAD")))
+            if (binding == null || !validTarget || !validSource || !validInvocation) {
+                diagnostics += ArchitectureDiagnostic(
+                    message = "Invalid operation binding edge '${edge.id}'",
+                    severity = ArchitectureDiagnosticSeverity.WARNING,
+                    code = "invalid-binding-edge",
+                    source = edge.sourceInfo,
+                )
+                edges.remove(edge.id)
+            }
         }
     }
 
@@ -414,6 +554,12 @@ private fun ArchitectureNode.ownerChain(nodes: Map<String, ArchitectureNode>): S
         current = current.ownerId?.let(nodes::get)
     }
 }
+
+private fun normalizePath(path: String): String = path
+    .replace(Regex("\\{[^}/]+}"), "{}")
+    .replace(Regex("/+"), "/")
+    .removeSuffix("/")
+    .ifEmpty { "/" }
 
 internal fun artifactNodeId(artifact: ResolvedManifestArtifact): String =
     ArchitectureGraphIds.artifact(artifact.ownerRef, artifact.artifactId)

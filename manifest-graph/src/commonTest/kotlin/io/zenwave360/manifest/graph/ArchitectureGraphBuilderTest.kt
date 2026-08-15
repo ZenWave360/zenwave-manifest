@@ -43,9 +43,9 @@ class ArchitectureGraphBuilderTest {
             graph.nodes.singleOrNull { it.kind == ArchitectureNodeKind.ZFL_SYSTEM && it.label == "Orders" },
             "Missing ZFL system. Nodes: $graphSummary. Diagnostics: $diagnosticSummary",
         )
-        val zflStep = assertNotNull(
-            graph.nodes.singleOrNull { it.kind == ArchitectureNodeKind.ZFL_STEP && it.label == "placeOrder" },
-            "Missing ZFL step. Nodes: $graphSummary. Diagnostics: $diagnosticSummary",
+        val zflOperation = assertNotNull(
+            graph.nodes.singleOrNull { it.kind == ArchitectureNodeKind.ZFL_OPERATION && it.label == "placeOrder" },
+            "Missing ZFL operation. Nodes: $graphSummary. Diagnostics: $diagnosticSummary",
         )
         val zdlArtifact = graph.nodes.single { it.kind == ArchitectureNodeKind.ARTIFACT && it.attributes["type"] == "zdl" }
         val providerOpenApi = graph.nodes.single { it.kind == ArchitectureNodeKind.ARTIFACT && it.attributes["artifactId"] == "orders-api" }
@@ -53,7 +53,8 @@ class ArchitectureGraphBuilderTest {
 
         assertTrue(graph.edges.any { it.kind == ArchitectureEdgeKind.EMITS && it.source == zdlMethod.id && it.target == zdlEvent.id })
         assertTrue(graph.edges.any { it.kind == ArchitectureEdgeKind.DECLARES_DOMAIN && it.source == zflSystem.id && it.target == zdlArtifact.id })
-        assertTrue(graph.edges.any { it.kind == ArchitectureEdgeKind.INVOKES && it.source == zflStep.id && it.target == zdlMethod.id })
+        assertTrue(graph.edges.any { it.kind == ArchitectureEdgeKind.RESOLVES_TO && it.source == zflOperation.id && it.target == zdlMethod.id })
+        assertTrue(graph.operationOccurrences(zflOperation.id).isNotEmpty())
         assertTrue(graph.edges.any {
             it.kind == ArchitectureEdgeKind.CONSUMES &&
                 it.source == consumerOpenApi.id && it.target == providerOpenApi.id &&

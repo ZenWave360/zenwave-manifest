@@ -104,7 +104,9 @@ internal class ZdlGraphArtifactAnalyzer : ManifestGraphArtifactAnalyzer {
                 val rest = methodRestEvidence(serviceRestPath, methodOptions)
                 val methodName = method["name"]?.toString() ?: methodKey
                 val methodPath = "$servicePath.methods.$methodKey"
-                val methodId = semanticId(artifactId, ArchitectureNodeKind.ZDL_METHOD, methodPath)
+                val methodId = ArchitectureGraphIds.zdlMethod(
+                    context.artifact.ownerRef, context.artifact.artifactId, serviceName, methodName,
+                )
                 nodes[methodId] = semanticNode(
                     context, methodId, ArchitectureNodeKind.ZDL_METHOD, methodName, serviceId, methodPath, model.getLocations(),
                     attributes(
@@ -115,6 +117,7 @@ internal class ZdlGraphArtifactAnalyzer : ManifestGraphArtifactAnalyzer {
                         "asyncapiTopic" to asyncApi["topic"]?.toString(),
                         "httpMethod" to rest?.first,
                         "restPath" to rest?.second,
+                        "intent" to if (rest?.first in setOf("GET", "HEAD")) "query" else "command",
                     ),
                 )
                 addEdge(edges, ArchitectureEdgeKind.CONTAINS, serviceId, methodId, ArchitectureProvenanceKind.ARTIFACT)

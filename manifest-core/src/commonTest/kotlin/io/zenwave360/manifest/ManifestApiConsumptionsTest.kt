@@ -115,6 +115,57 @@ class ManifestApiConsumptionsTest {
         assertTrue(result.diagnostics.any { it.code == "asyncapi-parse-failed" })
     }
 
+    @Test
+    fun indexesSupportedOpenApiVerbsAndNormalizesParameterNames() = runTest {
+        val index = OpenApiOperationIndex.parse(
+            """
+                openapi: 3.1.0
+                info: { title: Orders, version: 2.4.0 }
+                paths:
+                  /orders/{orderId}:
+                    get: { operationId: getOrder, summary: Get order }
+                    head: { operationId: headOrder }
+                    post: { operationId: createOrder }
+                    put: { operationId: replaceOrder }
+                    patch: { operationId: updateOrder }
+                    delete: { operationId: deleteOrder }
+                    options: { operationId: optionsOrder }
+                  /missing:
+                    post: { summary: Missing identifier }
+            """.trimIndent(),
+            "orders.yml",
+        )
+
+        assertEquals("2.4.0", index.version)
+        assertEquals(6, index.operations.size)
+        assertEquals(
+            setOf(OpenApiOperationIntent.QUERY, OpenApiOperationIntent.COMMAND),
+            index.operations.map { it.intent }.toSet(),
+        )
+        assertEquals(
+            "getOrder",
+            index.byMethodAndPath("get", "/orders/{id}").single().operationId,
+        )
+        assertTrue(index.operations.none { it.operationId == "optionsOrder" })
+        assertTrue(index.diagnostics.any { it.code == "missing-openapi-operation-id" })
+    }
+
+    @Test
+    fun reportsDuplicateOpenApiOperationIdsAndMalformedContracts() = runTest {
+        val duplicate = OpenApiOperationIndex.parse(
+            """
+                openapi: 3.1.0
+                paths:
+                  /one: { get: { operationId: duplicate } }
+                  /two: { post: { operationId: duplicate } }
+            """.trimIndent(),
+        )
+        assertTrue(duplicate.diagnostics.any { it.code == "duplicate-openapi-operation-id" })
+
+        val malformed = OpenApiOperationIndex.parse("paths: [not: valid")
+        assertTrue(malformed.diagnostics.any { it.code == "openapi-parse-failed" })
+    }
+
     private suspend fun manifestAndLoader(): Pair<ZenWaveManifest, ZenWaveManifestLoader> {
         val resources = mapOf(
             "file:///workspace/provider/asyncapi.yml" to PROVIDER_ASYNCAPI,

@@ -18,19 +18,21 @@ internal object ApiConsumptionGraphContributor {
             val artifactId = artifactNodeId(artifact)
             index.channels.values.forEach { channel ->
                 val channelPath = "channels.${channel.channelKey}"
-                val channelId = semanticId(artifactId, ArchitectureNodeKind.CHANNEL, channelPath)
+                val channelId = ArchitectureGraphIds.channel(artifact.ownerRef, artifact.artifactId, channel.channelKey)
                 val channelSource = artifactSource(manifestUri, artifact, channelPath)
                 nodes[channelId] = ArchitectureNode(
                     id = channelId,
                     kind = ArchitectureNodeKind.CHANNEL,
                     label = channel.summary ?: channel.channelKey,
                     ownerId = artifactId,
+                    description = channel.description,
                     attributes = attributes(
                         "channelKey" to channel.channelKey,
                         "address" to channel.address,
                         "messageKind" to channel.messageKind.name.lowercase(),
                         "summary" to channel.summary,
                         "description" to channel.description,
+                        "version" to index.version,
                     ),
                     source = channelSource,
                 )
@@ -41,7 +43,9 @@ internal object ApiConsumptionGraphContributor {
 
                 channel.operations.forEach { operation ->
                     val operationPath = "operations.${operation.operationId}"
-                    val operationId = semanticId(artifactId, ArchitectureNodeKind.API_OPERATION, operationPath)
+                    val operationId = ArchitectureGraphIds.apiOperation(
+                        artifact.ownerRef, artifact.artifactId, operation.operationId,
+                    )
                     val operationSource = artifactSource(manifestUri, artifact, operationPath)
                     nodes[operationId] = ArchitectureNode(
                         id = operationId,
@@ -66,6 +70,40 @@ internal object ApiConsumptionGraphContributor {
                         source = operationSource,
                     )
                 }
+            }
+        }
+
+        catalog.artifacts.filter { it.artifact.type == "openapi" }.forEach { artifact ->
+            val index = consumptions.openApiIndex(artifact) ?: return@forEach
+            val artifactId = artifactNodeId(artifact)
+            index.operations.forEach { operation ->
+                val operationPath = "operations.${operation.operationId}"
+                val operationId = ArchitectureGraphIds.apiOperation(
+                    artifact.ownerRef, artifact.artifactId, operation.operationId,
+                )
+                val operationSource = artifactSource(manifestUri, artifact, operationPath)
+                nodes[operationId] = ArchitectureNode(
+                    id = operationId,
+                    kind = ArchitectureNodeKind.API_OPERATION,
+                    label = operation.operationId,
+                    ownerId = artifactId,
+                    description = operation.description ?: operation.summary,
+                    attributes = attributes(
+                        "operationId" to operation.operationId,
+                        "method" to operation.method,
+                        "path" to operation.path,
+                        "normalizedPath" to operation.normalizedPath,
+                        "intent" to operation.intent.name.lowercase(),
+                        "version" to index.version,
+                        "summary" to operation.summary,
+                        "description" to operation.description,
+                    ),
+                    source = operationSource,
+                )
+                addEdge(
+                    edges, ArchitectureEdgeKind.DEFINES, artifactId, operationId,
+                    ArchitectureProvenanceKind.ARTIFACT, source = operationSource,
+                )
             }
         }
 

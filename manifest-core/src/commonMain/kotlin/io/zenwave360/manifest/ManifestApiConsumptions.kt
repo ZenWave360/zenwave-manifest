@@ -20,6 +20,35 @@ enum class AsyncApiAction {
 
 enum class AsyncApiMessageKind { EVENT, COMMAND }
 
+enum class OpenApiOperationIntent { COMMAND, QUERY }
+
+data class OpenApiOperation(
+    val operationId: String,
+    val method: String,
+    val path: String,
+    val normalizedPath: String,
+    val intent: OpenApiOperationIntent,
+    val summary: String?,
+    val description: String?,
+)
+
+class OpenApiOperationIndex internal constructor(
+    val operations: List<OpenApiOperation>,
+    val version: String?,
+    val diagnostics: List<ManifestDiagnostic>,
+) {
+    fun byMethodAndPath(method: String, path: String): List<OpenApiOperation> = operations.filter {
+        it.method == method.uppercase() && it.normalizedPath == normalizeOpenApiPath(path)
+    }
+
+    companion object {
+        @JvmStatic
+        @JvmOverloads
+        suspend fun parse(text: String, location: String = "openapi"): OpenApiOperationIndex =
+            parseOpenApiContract(text, location)
+    }
+}
+
 enum class ApiMatchKind { EXTERNAL_REF, ADDRESS, LEGACY_ADDRESS }
 
 data class AsyncApiOperationRef(
@@ -92,6 +121,7 @@ data class ApiConsumptionOptions @JvmOverloads constructor(
 class ManifestApiConsumptions private constructor(
     val consumerIndex: ManifestConsumerIndex,
     val providerChannelIndexes: Map<String, AsyncApiChannelIndex>,
+    val openApiOperationIndexes: Map<String, OpenApiOperationIndex>,
     val matches: List<ApiConsumptionMatch>,
     val apiConsumptions: List<ApiServiceConsumption>,
     val legacyMatches: List<LegacyClientMatch>,
@@ -99,6 +129,9 @@ class ManifestApiConsumptions private constructor(
 ) {
     fun channelIndex(artifact: ResolvedManifestArtifact): AsyncApiChannelIndex? =
         providerChannelIndexes[artifactKey(artifact)]
+
+    fun openApiIndex(artifact: ResolvedManifestArtifact): OpenApiOperationIndex? =
+        openApiOperationIndexes[artifactKey(artifact)]
 
     fun matchesFor(providerService: ManifestService): List<ApiConsumptionMatch> =
         matches.filter { it.edge.providerService.serviceRef == providerService.serviceRef }
@@ -122,7 +155,7 @@ class ManifestApiConsumptions private constructor(
                     manifest.uri,
                 )
                 return ManifestApiConsumptions(
-                    consumerIndex, emptyMap(), emptyList(), emptyList(), emptyList(), diagnostics,
+                    consumerIndex, emptyMap(), emptyMap(), emptyList(), emptyList(), emptyList(), diagnostics,
                 )
             }
 
@@ -135,6 +168,25 @@ class ManifestApiConsumptions private constructor(
                 }
             }
             val providerIndexes = providerContracts.mapValues { it.value.index }
+            val openApiIndexes = linkedMapOf<String, OpenApiOperationIndex>()
+            catalog.artifacts.filter { it.artifact.type == "openapi" }.forEach { artifact ->
+                val loaded = loader.loadArtifactResult(manifest, artifact.owner, artifact.artifact, options.loadOptions)
+                val content = loaded.content
+                if (content == null) {
+                    diagnostics += warning(
+                        loaded.errorMessage ?: "Cannot load OpenAPI artifact '${artifact.artifact.path}'",
+                        "openapi-artifact-load-failed",
+                        "${artifact.ownerRef}#${artifact.artifactId}",
+                    )
+                } else {
+                    val index = parseOpenApiContract(
+                        content,
+                        loaded.resource?.referenceUri() ?: artifact.artifact.path,
+                    )
+                    openApiIndexes[artifactKey(artifact)] = index
+                    diagnostics += index.diagnostics
+                }
+            }
 
             val matches = mutableListOf<ApiConsumptionMatch>()
             val serviceConsumptions = mutableListOf<ApiServiceConsumption>()
@@ -167,6 +219,7 @@ class ManifestApiConsumptions private constructor(
             return ManifestApiConsumptions(
                 consumerIndex = consumerIndex,
                 providerChannelIndexes = providerIndexes,
+                openApiOperationIndexes = openApiIndexes,
                 matches = matches.distinct(),
                 apiConsumptions = serviceConsumptions.distinct(),
                 legacyMatches = legacyMatches.distinct(),
@@ -175,6 +228,73 @@ class ManifestApiConsumptions private constructor(
         }
     }
 }
+
+private suspend fun parseOpenApiContract(text: String, location: String): OpenApiOperationIndex = try {
+    val root = RefParser.fromText(text, baseUri = memoryUri(location)).parse().getRoot().stringMap()
+    val diagnostics = mutableListOf<ManifestDiagnostic>()
+    val operations = mutableListOf<OpenApiOperation>()
+    val supported = linkedMapOf(
+        "get" to OpenApiOperationIntent.QUERY,
+        "head" to OpenApiOperationIntent.QUERY,
+        "post" to OpenApiOperationIntent.COMMAND,
+        "put" to OpenApiOperationIntent.COMMAND,
+        "patch" to OpenApiOperationIntent.COMMAND,
+        "delete" to OpenApiOperationIntent.COMMAND,
+    )
+    root["paths"].stringMap().forEach { (path, pathItemValue) ->
+        val pathItem = pathItemValue.stringMap()
+        supported.forEach { (verb, intent) ->
+            val operation = pathItem[verb].stringMap()
+            if (operation.isEmpty()) return@forEach
+            val operationId = operation["operationId"]?.toString()?.takeIf(String::isNotBlank)
+            if (operationId == null) {
+                diagnostics += warning(
+                    "OpenAPI operation '${verb.uppercase()} $path' has no operationId",
+                    "missing-openapi-operation-id",
+                    "$location#/paths/$path/$verb",
+                )
+                return@forEach
+            }
+            operations += OpenApiOperation(
+                operationId = operationId,
+                method = verb.uppercase(),
+                path = path,
+                normalizedPath = normalizeOpenApiPath(path),
+                intent = intent,
+                summary = operation["summary"]?.toString(),
+                description = operation["description"]?.toString(),
+            )
+        }
+    }
+    operations.groupingBy { it.operationId }.eachCount().filterValues { it > 1 }.keys.forEach { operationId ->
+        diagnostics += warning(
+            "OpenAPI operationId '$operationId' is declared more than once",
+            "duplicate-openapi-operation-id",
+            location,
+        )
+    }
+    OpenApiOperationIndex(
+        operations = operations,
+        version = root["info"].stringMap()["version"]?.toString(),
+        diagnostics = diagnostics,
+    )
+} catch (error: Exception) {
+    OpenApiOperationIndex(
+        operations = emptyList(),
+        version = null,
+        diagnostics = listOf(warning(
+            error.message ?: "Cannot parse OpenAPI document",
+            "openapi-parse-failed",
+            location,
+        )),
+    )
+}
+
+internal fun normalizeOpenApiPath(path: String): String = path
+    .replace(Regex("\\{[^}/]+\\}"), "{}")
+    .replace(Regex("/+"), "/")
+    .removeSuffix("/")
+    .ifEmpty { "/" }
 
 private data class ParsedAsyncApiContract(
     val root: Map<String, Any?>,

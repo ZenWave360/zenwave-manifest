@@ -10,6 +10,37 @@ import kotlin.test.assertTrue
 
 class ArchitectureGraphQueryTest {
     @Test
+    fun exposesStableResourceIdsAndDecodesTypedBindings() {
+        assertEquals(
+            "artifact/orders%002Fcheckout/async%0020api%00231/channel/channels.orders%002F%007Bid%007D",
+            ArchitectureGraphIds.channel("orders/checkout", "async api#1", "orders/{id}"),
+        )
+        assertEquals(
+            "artifact/orders%002Fcheckout/open%0020api%00231/api_operation/operations.GET%0020%002Forders%002F%007Bid%007D",
+            ArchitectureGraphIds.apiOperation("orders/checkout", "open api#1", "GET /orders/{id}"),
+        )
+        val edge = ArchitectureEdge(
+            id = "binding",
+            kind = ArchitectureEdgeKind.BINDS_TO,
+            source = "method",
+            target = "channel",
+            attributes = mapOf(
+                ArchitectureBindingAttributes.ROLE to ArchitectureBindingValues.ROLE_INVOCATION,
+                ArchitectureBindingAttributes.TRANSPORT to ArchitectureBindingValues.TRANSPORT_ASYNCAPI,
+                ArchitectureBindingAttributes.MESSAGE_KIND to ArchitectureBindingValues.KIND_COMMAND,
+                ArchitectureBindingAttributes.DIRECTION to ArchitectureBindingValues.DIRECTION_RECEIVE,
+                ArchitectureBindingAttributes.CHANNEL_KEY to "orders/{id}",
+            ),
+        )
+        val binding = ArchitectureOperationBinding.from(edge)!!
+        assertEquals(ArchitectureBindingRole.INVOCATION, binding.role)
+        assertEquals(ArchitectureBindingTransport.ASYNCAPI, binding.transport)
+        assertEquals(ArchitectureBindingMessageKind.COMMAND, binding.messageKind)
+        assertEquals(ArchitectureBindingDirection.RECEIVE, binding.direction)
+        assertEquals("orders/{id}", binding.channelKey)
+    }
+
+    @Test
     fun traversesFlowToMethodAndChannelAndFindsOperationConsumers() = runTest {
         val resources = mapOf(
             "file:///workspace/architecture/place-order.zfl" to ZFL,

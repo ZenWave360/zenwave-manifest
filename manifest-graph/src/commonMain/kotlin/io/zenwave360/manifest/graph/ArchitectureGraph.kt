@@ -10,13 +10,104 @@ import kotlin.jvm.JvmStatic
 enum class ArchitectureNodeKind {
     DOMAIN, SUBDOMAIN, SERVICE, ARTIFACT,
     ZDL_API, ZDL_SERVICE, ZDL_METHOD, ZDL_EVENT,
-    ZFL_SYSTEM, ZFL_FLOW, ZFL_STEP, ZFL_EVENT,
+    ZFL_SYSTEM, ZFL_FLOW, ZFL_OPERATION, ZFL_STEP, ZFL_EVENT, ZFL_OUTCOME,
     ZDL_ENTITY, API_OPERATION, CHANNEL, MESSAGE,
 }
 
 enum class ArchitectureEdgeKind {
     CONTAINS, DECLARES_ARTIFACT, DECLARES_DOMAIN, DEFINES,
     INVOKES, EMITS, CONSUMES, REFERENCES_API, TRIGGERS,
+    OCCURRENCE_OF, RESOLVES_TO, BINDS_TO, RESPONDS, COMPENSATES, RESULTS_IN,
+}
+
+object ArchitectureBindingAttributes {
+    const val ROLE = "role"
+    const val TRANSPORT = "transport"
+    const val MESSAGE_KIND = "messageKind"
+    const val DIRECTION = "direction"
+    const val OPERATION_ID = "operationId"
+    const val METHOD = "method"
+    const val PATH = "path"
+    const val CHANNEL_KEY = "channelKey"
+    const val ADDRESS = "address"
+}
+
+object ArchitectureBindingValues {
+    const val ROLE_INVOCATION = "invocation"
+    const val ROLE_TRIGGER = "trigger"
+    const val ROLE_EMISSION = "emission"
+    const val ROLE_RESPONSE = "response"
+    const val TRANSPORT_OPENAPI = "openapi"
+    const val TRANSPORT_ASYNCAPI = "asyncapi"
+    const val KIND_COMMAND = "command"
+    const val KIND_QUERY = "query"
+    const val KIND_EVENT = "event"
+    const val DIRECTION_SEND = "send"
+    const val DIRECTION_RECEIVE = "receive"
+}
+
+enum class ArchitectureBindingRole(val wireValue: String) {
+    INVOCATION(ArchitectureBindingValues.ROLE_INVOCATION),
+    TRIGGER(ArchitectureBindingValues.ROLE_TRIGGER),
+    EMISSION(ArchitectureBindingValues.ROLE_EMISSION),
+    RESPONSE(ArchitectureBindingValues.ROLE_RESPONSE),
+}
+
+enum class ArchitectureBindingTransport(val wireValue: String) {
+    OPENAPI(ArchitectureBindingValues.TRANSPORT_OPENAPI),
+    ASYNCAPI(ArchitectureBindingValues.TRANSPORT_ASYNCAPI),
+}
+
+enum class ArchitectureBindingMessageKind(val wireValue: String) {
+    COMMAND(ArchitectureBindingValues.KIND_COMMAND),
+    QUERY(ArchitectureBindingValues.KIND_QUERY),
+    EVENT(ArchitectureBindingValues.KIND_EVENT),
+}
+
+enum class ArchitectureBindingDirection(val wireValue: String) {
+    SEND(ArchitectureBindingValues.DIRECTION_SEND),
+    RECEIVE(ArchitectureBindingValues.DIRECTION_RECEIVE),
+}
+
+data class ArchitectureOperationBinding(
+    val edge: ArchitectureEdge,
+    val role: ArchitectureBindingRole,
+    val transport: ArchitectureBindingTransport,
+    val messageKind: ArchitectureBindingMessageKind,
+    val direction: ArchitectureBindingDirection,
+    val operationId: String? = null,
+    val method: String? = null,
+    val path: String? = null,
+    val channelKey: String? = null,
+    val address: String? = null,
+) {
+    companion object {
+        @JvmStatic
+        fun from(edge: ArchitectureEdge): ArchitectureOperationBinding? {
+            if (edge.kind != ArchitectureEdgeKind.BINDS_TO) return null
+            val attributes = edge.attributes
+            val role = ArchitectureBindingRole.entries.find {
+                it.wireValue == attributes[ArchitectureBindingAttributes.ROLE]
+            } ?: return null
+            val transport = ArchitectureBindingTransport.entries.find {
+                it.wireValue == attributes[ArchitectureBindingAttributes.TRANSPORT]
+            } ?: return null
+            val messageKind = ArchitectureBindingMessageKind.entries.find {
+                it.wireValue == attributes[ArchitectureBindingAttributes.MESSAGE_KIND]
+            } ?: return null
+            val direction = ArchitectureBindingDirection.entries.find {
+                it.wireValue == attributes[ArchitectureBindingAttributes.DIRECTION]
+            } ?: return null
+            return ArchitectureOperationBinding(
+                edge, role, transport, messageKind, direction,
+                attributes[ArchitectureBindingAttributes.OPERATION_ID],
+                attributes[ArchitectureBindingAttributes.METHOD],
+                attributes[ArchitectureBindingAttributes.PATH],
+                attributes[ArchitectureBindingAttributes.CHANNEL_KEY],
+                attributes[ArchitectureBindingAttributes.ADDRESS],
+            )
+        }
+    }
 }
 
 enum class ArchitectureProvenanceKind { MANIFEST, ARTIFACT, DECLARED_CONSUMER, INFERRED }
@@ -39,6 +130,7 @@ data class ArchitectureNode(
     val kind: ArchitectureNodeKind,
     val label: String,
     val ownerId: String? = null,
+    val description: String? = null,
     val attributes: Map<String, String> = emptyMap(),
     val source: ArchitectureSource? = null,
 )
@@ -84,6 +176,35 @@ data class ArchitectureGraph(
         incomingById[id].orEmpty().filter { kind == null || it.kind == kind }
 
     fun edges(kind: ArchitectureEdgeKind): List<ArchitectureEdge> = edgesByKind[kind].orEmpty()
+
+    fun resolvedMethod(zflOperationId: String): ArchitectureNode? =
+        outgoing(zflOperationId, ArchitectureEdgeKind.RESOLVES_TO)
+            .mapNotNull { nodesById[it.target] }
+            .singleOrNull { it.kind == ArchitectureNodeKind.ZDL_METHOD }
+
+    @JvmOverloads
+    fun operationBindings(methodNodeId: String, role: String? = null): List<ArchitectureEdge> {
+        val sources = buildSet {
+            add(methodNodeId)
+            outgoing(methodNodeId, ArchitectureEdgeKind.EMITS).forEach { add(it.target) }
+        }
+        return sources.flatMap { outgoing(it, ArchitectureEdgeKind.BINDS_TO) }
+            .filter { edge ->
+                val binding = ArchitectureOperationBinding.from(edge) ?: return@filter false
+                role == null || binding.role.wireValue == role
+            }
+            .distinctBy { it.id }
+    }
+
+    fun operationOccurrences(zflOperationId: String): List<ArchitectureNode> =
+        incoming(zflOperationId, ArchitectureEdgeKind.OCCURRENCE_OF)
+            .mapNotNull { nodesById[it.source] }
+            .sortedBy { it.attributes["occurrenceIndex"]?.toIntOrNull() ?: Int.MAX_VALUE }
+
+    fun flowOutcomes(flowId: String): List<ArchitectureNode> =
+        outgoing(flowId, ArchitectureEdgeKind.CONTAINS)
+            .mapNotNull { nodesById[it.target] }
+            .filter { it.kind == ArchitectureNodeKind.ZFL_OUTCOME }
 
     /** Finds the manifest service owning a semantic or artifact node, if one exists. */
     fun owningService(nodeId: String): ArchitectureNode? {
@@ -172,6 +293,19 @@ object ArchitectureGraphIds {
     @JvmStatic
     fun artifact(ownerRef: String, artifactId: String): String =
         "artifact/${segment(ownerRef)}/${segment(artifactId)}"
+
+    @JvmStatic
+    fun channel(ownerRef: String, artifactId: String, channelKey: String): String =
+        semantic(artifact(ownerRef, artifactId), ArchitectureNodeKind.CHANNEL, "channels.$channelKey")
+
+    @JvmStatic
+    fun apiOperation(ownerRef: String, artifactId: String, operationId: String): String =
+        semantic(artifact(ownerRef, artifactId), ArchitectureNodeKind.API_OPERATION, "operations.$operationId")
+
+    @JvmStatic
+    fun zdlMethod(ownerRef: String, artifactId: String, serviceName: String, methodName: String): String =
+        semantic(artifact(ownerRef, artifactId), ArchitectureNodeKind.ZDL_METHOD,
+            "services.$serviceName.methods.$methodName")
 
     @JvmStatic
     fun semantic(artifactId: String, kind: ArchitectureNodeKind, path: String): String =
