@@ -37,7 +37,7 @@ kotlin {
         }
 
         jvmTest.dependencies {
-            implementation("com.networknt:json-schema-validator:2.0.4")
+            implementation("com.networknt:json-schema-validator:3.0.6")
         }
     }
 }
