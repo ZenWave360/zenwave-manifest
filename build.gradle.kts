@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "io.zenwave360.manifest"
-version = "0.9.3"
+version = "1.0.0-SNAPSHOT"
 
 allprojects {
     repositories {
